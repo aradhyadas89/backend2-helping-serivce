@@ -259,3 +259,155 @@ $$\mathcal{A}_{\text{norm}}(u, c) = \min\left(100, \, \max\left(0, \, \left\lflo
   - `academicAlignmentBonus`: $25.0$
   - `cartDwellBonus`: $30.0$
   - `popularityWeight`: $10.0$
+
+
+
+---
+
+## Algorithm 7: Partner Crisis Gate & 2.5 km Concentric Ring Delay Partitioning Engine
+
+### 7.1 Objective
+Ensure order fulfillment reliability by enforcing an online partner crisis gate (at least 2 online partners required per order in the zone) and partitioning the 2.5 km dispatch radius into 4 concentric distance bands. Partners closer to the user receive order notifications earlier, providing proximity priority while ensuring full coverage during order rushes.
+
+### 7.2 Mathematical Formulation & Crisis Gate
+
+#### 1. Partner Availability & Crisis Gate Check
+Let $\mathcal{P}_{\text{online}}$ be the set of active delivery partners where:
+$$\mathcal{P}_{\text{active}} = \{ p \in \mathcal{P} \mid p.\text{isOnline} = \text{True} \land p.\text{isBlocked} = \text{False} \land p.\text{activeOrderId} = \text{None} \}$$
+
+For user order location $U = (\phi_U, \lambda_U)$ and maximum dispatch radius $R_{\text{dispatch}} = 2500\text{ meters}$ (2.5 km):
+$$\mathcal{P}_{\text{candidate}} = \{ p \in \mathcal{P}_{\text{active}} \mid d(U, \, p.\mathbf{x}) \le R_{\text{dispatch}} \}$$
+
+$$\operatorname{CrisisGate}(\mathcal{P}_{\text{candidate}}) = \begin{cases}
+\text{PERMIT} & \text{if } |\mathcal{P}_{\text{candidate}}| \ge 2 \\
+\text{REJECT (HTTP 503)} & \text{if } |\mathcal{P}_{\text{candidate}}| < 2
+\end{cases}$$
+
+#### 2. 2.5 km Concentric Ring Delay Partitioning
+The circular dispatch zone $\mathcal{Z}(U, 2.5\text{km})$ is partitioned into 4 concentric distance boxes:
+
+$$\mathcal{B}_1 = \{ p \in \mathcal{P}_{\text{candidate}} \mid 0 \le d(U, p.\mathbf{x}) \le 500\text{ m} \} \implies \Delta t_{\text{delay}} = 0\text{ s (Immediate)}$$
+$$\mathcal{B}_2 = \{ p \in \mathcal{P}_{\text{candidate}} \mid 500 < d(U, p.\mathbf{x}) \le 1000\text{ m} \} \implies \Delta t_{\text{delay}} = 5\text{ s}$$
+$$\mathcal{B}_3 = \{ p \in \mathcal{P}_{\text{candidate}} \mid 1000 < d(U, p.\mathbf{x}) \le 1750\text{ m} \} \implies \Delta t_{\text{delay}} = 10\text{ s}$$
+$$\mathcal{B}_4 = \{ p \in \mathcal{P}_{\text{candidate}} \mid 1750 < d(U, p.\mathbf{x}) \le 2500\text{ m} \} \implies \Delta t_{\text{delay}} = 15\text{ s}$$
+
+#### 3. Atomic First-Pick Order Claim (Concurrency Protection)
+To prevent race conditions when multiple partners tap "Accept Order" concurrently:
+$$\text{ClaimOrder}(O, p) = \operatorname{atomic\_swap}\big( O.\text{status} == \text{'SEARCHING\_PARTNER'} \land O.\text{assignedPartnerId} == \text{None} \implies O.\text{status} \leftarrow \text{'PAYMENT\_PENDING'}, \, O.\text{assignedPartnerId} \leftarrow p.\text{id} \big)$$
+
+---
+
+## Algorithm 8: 1-Minute Payment Selection Expiration & 30-Paisa Cancellation Surcharge Engine
+
+### 8.1 Objective
+Enforce rapid order commitment by granting the user exactly 60 seconds (1 minute) to select their payment mode (`ONLINE` or `OFFLINE`). If unpaid or expired, apply cancellation tracking: grant 1 initial cancellation as mercy, and apply a 30 paisa (+₹0.30) penalty surcharge on all subsequent orders.
+
+### 8.2 Mathematical Formulation & Surcharge Rules
+
+Let $C_u$ be the user's historical count of unpaid/timeout order cancellations.
+
+$$\tau_{\text{deadline}} = \tau_{\text{partner\_accepted}} + 60\text{ seconds}$$
+
+#### Expiration Evaluation:
+$$\text{Status}(O) = \begin{cases}
+\text{'CANCELLED\_PAYMENT\_TIMEOUT'} & \text{if } \tau_{\text{now}} > \tau_{\text{deadline}} \land O.\text{paymentMode} = \text{None} \\
+\text{'PROCEED'} & \text{otherwise}
+\end{cases}$$
+
+Upon timeout cancellation:
+$$C_u \leftarrow C_u + 1$$
+
+#### Pricing & Billing Surcharge Calculation:
+For any subsequent order placed by user $u$:
+$$\mathcal{S}_{\text{cancellation}}(u) = \begin{cases}
+0.00 & \text{if } C_u \le 1 \quad (\text{1st Cancellation Mercy}) \\
+0.30 & \text{if } C_u \ge 2 \quad (\text{30 Paisa Penalty Surcharge})
+\end{cases}$$
+
+$$\text{OrderTotal} = \text{Subtotal} + \text{DeliveryFee} + \mathcal{S}_{\text{cancellation}}(u)$$
+$$\text{Subject to: } \text{Subtotal} \ge 30.00\text{ INR}$$
+
+---
+
+## Algorithm 9: Mode-Specific Travel ETA (Cycle vs Walk) & One-Time Mercy Extension Algorithm
+
+### 9.1 Objective
+Model partner transit physics according to transport mode (`cycle` vs `walk`), compute realistic travel ETAs with buffer, and provide a one-time mercy extension if delayed, penalizing partner reputation only on repeated unexcused delays.
+
+### 9.2 Velocity Profiles & Initial ETA Formulation
+$$v_{\text{mode}} = \begin{cases}
+4.167\text{ m/s} \quad (15.0\text{ km/h}) & \text{if mode} = \text{'cycle'} \\
+1.250\text{ m/s} \quad (4.5\text{ km/h}) & \text{if mode} = \text{'walk'}
+\end{cases}$$
+
+$$\text{ETA}_{\text{seconds}} = \left\lfloor \frac{d(P_{\text{partner}}, P_{\text{user}})}{v_{\text{mode}}} \right\rfloor + T_{\text{buffer}} \quad (T_{\text{buffer}} = 180\text{ s})$$
+$$t_{\text{expires}} = t_{\text{start}} + \text{ETA}_{\text{seconds}}$$
+
+### 9.3 One-Time Mercy Extension & Reputation Penalty
+If partner fails to reach arrival perimeter ($d \le 50\text{ m}$) before $t_{\text{expires}}$:
+
+$$\operatorname{HandleDelay}(p, O) = \begin{cases}
+\text{Grant Mercy Extension: } \Delta t_{\text{ext}} = \left\lfloor \frac{d_{\text{remaining}}}{v_{\text{mode}}} \right\rfloor + 120\text{s}, \quad O.\text{mercyUsed} \leftarrow \text{True} & \text{if } \neg O.\text{mercyUsed} \\
+\text{Penalize Partner: } p.\text{reputationScore} \leftarrow \max(0, p.\text{reputationScore} - 5) & \text{if } O.\text{mercyUsed} \equiv \text{True}
+\end{cases}$$
+
+---
+
+## Algorithm 10: 5:1 Online-to-Offline Partner Payment Fairness Balancer
+
+### 10.1 Objective
+Prevent delivery partners from being overwhelmed with cash collection risks and cash-handling disputes by maintaining a strict **5:1 ratio of online to offline orders**.
+
+### 10.2 Mathematical Model
+Let:
+- $N_{\text{online}}(p)$: Number of completed online payment deliveries.
+- $N_{\text{offline}}(p)$: Number of completed offline cash deliveries.
+
+The maximum allowed offline orders for partner $p$ is governed by:
+$$\operatorname{MaxOfflineAllowed}(p) = \left\lfloor \frac{N_{\text{online}}(p)}{5} \right\rfloor + 1$$
+
+$$\operatorname{IsEligibleForOffline}(p) = \begin{cases}
+\text{True} & \text{if } N_{\text{offline}}(p) < \operatorname{MaxOfflineAllowed}(p) \\
+\text{False} & \text{otherwise}
+\end{cases}$$
+
+If user selects `OFFLINE` and the partner is ineligible, the partner must complete $(N_{\text{offline}} + 1) \times 5 - N_{\text{online}}$ more online orders to rebalance their ratio.
+
+---
+
+## Algorithm 11: Dual-Phase OTP Handshake & Virtual Wallet Ledger Settlement
+
+### 11.1 Objective
+Guarantee cash collection safety and proof-of-delivery through a cryptographically random two-phase 6-digit OTP verification protocol paired with virtual ledger separation from gateway payments.
+
+### 11.2 Mathematical Formulation & State Machine
+
+```
+[ OFFLINE Order Initiated ]
+            |
+            v
+[ Phase 1: Cash Collection ]
+  Partner reaches user (d <= 50m)
+  -> User Phone Rings (WS)
+  -> OTP_cash in [100000, 999999] emailed to user
+  -> Partner collects physical cash & submits OTP_cash
+  -> Verify(OTP_cash) == True
+  -> Order transitions to CASH_COLLECTED
+            |
+            v
+[ Partner Picks Up Product from Vendor/Hub ]
+            |
+            v
+[ Phase 2: Final Delivery ]
+  Partner reaches user delivery location (d <= 50m)
+  -> User Phone Rings (WS)
+  -> OTP_deliv in [100000, 999999] emailed to user
+  -> Partner delivers product & submits OTP_deliv
+  -> Verify(OTP_deliv) == True
+  -> Order transitions to DELIVERED
+            |
+            v
+[ Virtual Wallet Credit ]
+  Real Money: Resides in Razorpay Merchant Account
+  Partner Virtual Balance: W_v(p) <- W_v(p) + Fee_delivery
+```

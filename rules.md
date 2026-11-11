@@ -138,3 +138,75 @@ npm test
 ```
 - All test suites in `tests/` MUST pass with **0 failures (100% pass rate)**.
 - New endpoints or business logic MUST be accompanied by unit or integration tests utilizing `MongoMemoryServer`.
+
+
+
+---
+
+## 8. User Order System, Pricing & Billing Rules
+
+### Rule 8.1: Minimum Order Value Gate
+- Every order submitted via `POST /api/v1/orders` MUST satisfy:
+  $$\text{Subtotal} \ge 30.00\text{ INR}$$
+- Any order with items subtotal $< ₹30.00$ MUST be rejected with HTTP 400 (`BadRequestException`) specifying the minimum order threshold.
+
+### Rule 8.2: 1-Minute Payment Selection Window
+- Once a partner accepts an order, the user is granted exactly **60 seconds (1 minute)** to select either `ONLINE` or `OFFLINE` payment mode.
+- Failure to select payment mode within 60 seconds triggers automatic order cancellation (`CANCELLED_PAYMENT_TIMEOUT`) and increments the user's unpaid cancellation counter.
+
+### Rule 8.3: 30-Paisa Cancellation Surcharge Penalty
+- The first unpaid order cancellation by any user is forgiven as a **one-time mercy**.
+- Upon the **second ($\ge 2$) and subsequent cancellations**, a surcharge penalty of **+₹0.30 (30 paisa)** is automatically appended to the billing breakdown of all future orders placed by that user.
+
+---
+
+## 9. Partner Crisis Gate & 2.5 km Ring Partitioning Rules
+
+### Rule 9.1: Partner Crisis Ratio Gate
+- An order can only be initiated if there are at least **2 online partners** available within the 2.5 km dispatch radius.
+- If fewer than 2 active partners are online, the system MUST return HTTP 503 (`Service Unavailable`) with:
+  `"Service temporarily unavailable due to partner crisis. At least 2 active delivery partners must be online in your zone."`
+
+### Rule 9.2: 2.5 km Concentric Ring Staggered Delays
+- Candidate partners within 2.5 km are partitioned into 4 distance boxes:
+  - **Box 1** ($0 - 500\text{ m}$): $0\text{ s}$ delay
+  - **Box 2** ($500 - 1000\text{ m}$): $5\text{ s}$ delay
+  - **Box 3** ($1000 - 1750\text{ m}$): $10\text{ s}$ delay
+  - **Box 4** ($1750 - 2500\text{ m}$): $15\text{ s}$ delay
+- Rings are dispatched via WebSocket with respective delays to give closer partners priority.
+
+### Rule 9.3: Atomic First-Pick Order Acceptance
+- Order claim by a partner MUST be executed as an atomic database condition (`assignedPartnerId == null`).
+- Concurrent attempts by other partners MUST return HTTP 409 (`ConflictException`).
+
+---
+
+## 10. Partner Payment Mode Ratio & Delivery Rules
+
+### Rule 10.1: 5:1 Online-to-Offline Fairness Balancer
+- Each partner is allocated an offline cash delivery quota governed by:
+  $$\operatorname{MaxOfflineAllowed} = \left\lfloor \frac{\text{onlineOrdersCompleted}}{5} \right\rfloor + 1$$
+- Partners exceeding this quota cannot accept additional offline cash orders until sufficient online orders are completed.
+
+### Rule 10.2: Transport Mode Physics & One-Time Mercy Extension
+- Travel ETAs are computed according to partner transport mode:
+  - `cycle`: $15.0\text{ km/h} \approx 4.167\text{ m/s}$
+  - `walk`: $4.5\text{ km/h} \approx 1.250\text{ m/s}$
+- If partner is delayed, they are granted **exactly one mercy extension**.
+- Subsequent unexcused delays deduct $5$ points from the partner's reputation score.
+
+### Rule 10.3: Dual OTP Verification & Ring Handshake
+- **Cash Pickup Handshake**:
+  1. Partner marks reached near user.
+  2. User phone rings via WebSocket.
+  3. 6-digit numeric OTP is emailed to user.
+  4. Partner collects physical cash and verifies the OTP via `POST /api/v1/orders/:orderId/verify-cash-otp`.
+- **Delivery Handshake**:
+  1. Partner marks arrival at delivery point.
+  2. User phone rings via WebSocket.
+  3. 6-digit delivery OTP is emailed to user.
+  4. Partner submits OTP via `POST /api/v1/orders/:orderId/verify-delivery-otp` to complete the delivery.
+
+### Rule 10.4: Virtual Wallet & Real Money Separation
+- Customer payments (via Razorpay gateway or cash) belong to the platform.
+- Delivery fees earned by partners are credited as **virtual balances** in their in-app wallet (`PartnerWallet.virtualBalance`).

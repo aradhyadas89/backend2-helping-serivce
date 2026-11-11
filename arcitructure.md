@@ -257,3 +257,4 @@ The caching system automatically degrades gracefully across three tiers:
 - **Startup Probe**: Tolerates up to 60s for initial Atlas connection establishment.
 - **Liveness Probe**: Monitored via `GET /api/v1/health`.
 - **Readiness Probe**: Queries `/api/v1/health` every 5 seconds. Pods reporting degraded status are dynamically pulled from cluster traffic.
+
