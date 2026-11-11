@@ -1,0 +1,79 @@
+import { Document, Schema, Model } from 'mongoose';
+import { getAnalyticsDb } from '../config/database';
+
+export type ProductEventType =
+  | 'view'
+  | 'cart_add'
+  | 'cart_remove'
+  | 'accessory_click'
+  | 'purchase'
+  | 'search_click';
+
+export interface IProductEvent extends Document {
+  userId: string;
+  productId: string;
+  productTitle?: string;
+  category: string;
+  eventType: ProductEventType;
+  metadata?: Record<string, any>;
+  timestamp: Date;
+}
+
+export const ProductEventSchema = new Schema<IProductEvent>(
+  {
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    productId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    productTitle: {
+      type: String,
+      trim: true,
+    },
+    category: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    eventType: {
+      type: String,
+      enum: ['view', 'cart_add', 'cart_remove', 'accessory_click', 'purchase', 'search_click'],
+      required: true,
+      index: true,
+    },
+    metadata: {
+      type: Schema.Types.Mixed,
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+      index: true,
+    },
+  },
+  {
+    timestamps: false,
+    toJSON: {
+      transform(_doc, ret: Record<string, any>) {
+        ret.id = ret._id;
+        delete ret._id;
+        delete ret.__v;
+        return ret;
+      },
+    },
+  }
+);
+
+ProductEventSchema.index({ userId: 1, timestamp: -1 });
+ProductEventSchema.index({ category: 1, timestamp: -1 });
+ProductEventSchema.index({ eventType: 1, timestamp: -1 });
+
+export const getProductEventModel = (): Model<IProductEvent> => {
+  const db = getAnalyticsDb();
+  return db.models.ProductEvent || db.model<IProductEvent>('ProductEvent', ProductEventSchema);
+};
+
