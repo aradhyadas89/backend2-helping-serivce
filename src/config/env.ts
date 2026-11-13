@@ -35,13 +35,22 @@ export const env = {
   // Main Backend Interconnect
   MAIN_BACKEND_URL: process.env.MAIN_BACKEND_URL || 'http://localhost:8000',
 
-  // Database URLs
+  // Database URLs (3 Interconnected MongoDB Databases)
   MONGODB_URL: process.env.MONGODB_URL || 'mongodb://localhost:27017/helping_services_analytics',
   MONGODB_DB_NAME: process.env.MONGODB_DB_NAME || 'helping_services_analytics',
-  MONGODB_ANALYTICS_URL: process.env.MONGODB_ANALYTICS_URL || process.env.MONGODB_URL || '',
-  MONGODB_ANALYTICS_DB_NAME: process.env.MONGODB_ANALYTICS_DB_NAME || 'helping_services_analytics',
+  
+  // 1. Core / Identity DB (Users, Roles, Partner Profiles, Wallets, User Order Profiles)
   MONGODB_CORE_URL: process.env.MONGODB_CORE_URL || '',
   MONGODB_CORE_DB_NAME: process.env.MONGODB_CORE_DB_NAME || 'helping_services_core',
+
+  // 2. Product Catalog DB (Admin Uploads, Products, Pricing in ₹, Categories, Stock)
+  MONGODB_CATALOG_URL: process.env.MONGODB_CATALOG_URL || '',
+  MONGODB_CATALOG_DB_NAME: process.env.MONGODB_CATALOG_DB_NAME || 'helping_services_catalog',
+
+  // 3. User Intelligence & Analytics DB (Live Locations, Orders, Lifecycle, Devices, Alerts)
+  MONGODB_ANALYTICS_URL: process.env.MONGODB_ANALYTICS_URL || process.env.MONGODB_URL || '',
+  MONGODB_ANALYTICS_DB_NAME: process.env.MONGODB_ANALYTICS_DB_NAME || 'helping_services_analytics',
+
   MONGODB_MAX_POOL_SIZE: parseInt(process.env.MONGODB_MAX_POOL_SIZE || '50', 10),
   MONGODB_MIN_POOL_SIZE: parseInt(process.env.MONGODB_MIN_POOL_SIZE || '10', 10),
 

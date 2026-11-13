@@ -272,6 +272,7 @@ export class LocationStreamService {
           },
         },
         { $replaceRoot: { newRoot: '$doc' } },
+        { $sort: { distanceMeters: 1 } },
         { $limit: limit },
       ]);
 

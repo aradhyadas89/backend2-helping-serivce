@@ -210,3 +210,29 @@ npm test
 ### Rule 10.4: Virtual Wallet & Real Money Separation
 - Customer payments (via Razorpay gateway or cash) belong to the platform.
 - Delivery fees earned by partners are credited as **virtual balances** in their in-app wallet (`PartnerWallet.virtualBalance`).
+
+---
+
+## 11. Multi-Database Interconnect & Data Governance Rules
+
+### Rule 11.1: 3 Interconnected Database Boundaries
+- All persistent data MUST be routed to its designated database instance:
+  1. **Core Database (`helping_services_core`)**:
+     - `Partner`, `PartnerWallet`, `UserOrderProfile`, User identity, and authorization credentials.
+  2. **Catalog Database (`helping_services_catalog`)**:
+     - `Product` (titles, pricing in ₹, inventory stock, SKUs, active categories).
+  3. **Analytics & Operations Database (`helping_services_analytics`)**:
+     - `Order` (state machine, ring delays, OTPs, timer countdowns), `UserLocation`, `UserDevice`, `GeofenceZone`, `SecurityAlert`, `UserInterestProfile`, `ProductEvent`.
+
+### Rule 11.2: Dynamic Model Compilation via Connection Getters
+- Mongoose models MUST NEVER be registered on the global default `mongoose` connection object.
+- Every model file in `src/models/*.ts` MUST export a dynamic getter function (`getCoreDb()`, `getCatalogDb()`, or `getAnalyticsDb()`) that compiles and caches the schema onto its dedicated connection instance.
+
+### Rule 11.3: Cross-Database Referential Integrity
+- Because models reside on distinct database clusters in production Atlas environments, MongoDB `$lookup` aggregations across separate databases are strictly prohibited.
+- Cross-database relationships (e.g., `Order` referencing `Product.sku` or `Partner.partnerId`) MUST be resolved application-side using asynchronous service queries.
+
+### Rule 11.4: In-Memory Multi-Database Test Isolation
+- During test execution (`NODE_ENV === 'test'`), all 3 logical databases MUST run on `mongodb-memory-server` isolated via `useDb(dbName, { useCache: true })`.
+- Test cleanup hooks (`afterEach`) MUST sweep and truncate collections across all 3 logical databases to prevent state leakage between test suites.
+

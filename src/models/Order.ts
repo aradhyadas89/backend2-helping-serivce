@@ -280,3 +280,4 @@ export const getOrderModel = (): Model<IOrder> => {
   const db = getAnalyticsDb();
   return db.models.Order || db.model<IOrder>('Order', OrderSchema);
 };
+

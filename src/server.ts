@@ -2,7 +2,7 @@ import http from 'http';
 import { createApp } from './app';
 import { env } from './config/env';
 import { logger } from './config/logger';
-import { connectDB, closeDB } from './config/database';
+import { connectDB, closeDB, ensureIndexes } from './config/database';
 import { getCacheClient } from './config/redis';
 import { setupWebSocketServer } from './websocket/ws-server';
 import { userAnalysisService } from './services/user-analysis.service';
@@ -15,8 +15,9 @@ async function bootstrap() {
     logger.info(`Target Environment: ${env.ENVIRONMENT}`);
     logger.info('========================================================');
 
-    // 1. Establish Database Connection Pool
+    // 1. Establish Database Connection Pool across all 3 Interconnected Databases
     await connectDB();
+    await ensureIndexes();
 
     // 2. Initialize Cache Provider (Upstash / IORedis / In-Memory)
     getCacheClient();

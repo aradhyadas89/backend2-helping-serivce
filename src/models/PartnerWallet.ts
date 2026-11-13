@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getCoreDb } from '../config/database';
 
 export interface IWalletTransaction {
   transactionId: string;
@@ -98,6 +98,7 @@ export const PartnerWalletSchema = new Schema<IPartnerWallet>(
 );
 
 export const getPartnerWalletModel = (): Model<IPartnerWallet> => {
-  const db = getAnalyticsDb();
+  const db = getCoreDb();
   return db.models.PartnerWallet || db.model<IPartnerWallet>('PartnerWallet', PartnerWalletSchema);
 };
+

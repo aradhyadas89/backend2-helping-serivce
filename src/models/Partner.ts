@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getCoreDb } from '../config/database';
 
 export type TransportMode = 'cycle' | 'walk';
 
@@ -137,6 +137,7 @@ PartnerSchema.index({ currentLocation: '2dsphere' });
 PartnerSchema.index({ isOnline: 1, isBlocked: 1 });
 
 export const getPartnerModel = (): Model<IPartner> => {
-  const db = getAnalyticsDb();
+  const db = getCoreDb();
   return db.models.Partner || db.model<IPartner>('Partner', PartnerSchema);
 };
+

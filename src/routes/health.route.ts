@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { env } from '../config/env';
+import { getDatabaseHealth } from '../config/database';
 import { locationStreamService } from '../services/location-stream.service';
 import { deviceStreamService } from '../services/device-stream.service';
 import { wsDispatcher } from '../websocket/ws-dispatcher';
@@ -9,11 +10,12 @@ const router = Router();
 
 /**
  * @route   GET /api/v1/health
- * @desc    Kubernetes readiness, liveness, and startup probe endpoint
+ * @desc    Kubernetes readiness, liveness, and startup probe endpoint for 3 interconnected DBs
  */
 router.get('/', (_req: Request, res: Response) => {
-  const dbState = mongoose.connection.readyState;
-  const isDbConnected = dbState === 1;
+  const dbHealth = getDatabaseHealth();
+  const defaultState = mongoose.connection.readyState;
+  const isDbConnected = dbHealth.allConnected || defaultState === 1;
 
   const status = isDbConnected ? 'healthy' : 'degraded';
   const statusCode = isDbConnected ? 200 : 503;
@@ -29,8 +31,9 @@ router.get('/', (_req: Request, res: Response) => {
     uptimeSeconds: Math.round(process.uptime()),
     database: {
       status: isDbConnected ? 'connected' : 'disconnected',
-      readyState: dbState,
+      readyState: defaultState,
     },
+    databases: dbHealth.databases,
     buffers: {
       locationsBuffered: locationStreamService.getBufferedEventStream({ limit: 500 }).length,
       devicesBuffered: deviceStreamService.getBufferedEventStream({ limit: 500 }).length,
@@ -47,4 +50,3 @@ router.get('/', (_req: Request, res: Response) => {
 });
 
 export default router;
-

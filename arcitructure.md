@@ -204,9 +204,40 @@ graph TD
 
 ---
 
-## 5. Multi-Database Architecture & Connection Topology
+## 5. Multi-Database Architecture & 3 Interconnected Clusters
 
-The Sub-Backend connects to MongoDB utilizing a single clustered TLS connection pool with dedicated namespace segregation:
+`backend2-helping-service` connects directly to **3 dedicated, interconnected MongoDB databases** (both in dedicated multi-cluster Atlas production mode and cached multi-database in-memory test mode):
+
+```mermaid
+flowchart TD
+    subgraph SubBackend["Helping Services Sub-Backend 2 (Port 8001)"]
+        Router["Model & Query Dispatcher"]
+    end
+
+    subgraph CoreDB["1. Core / Identity Database (helping_services_core)"]
+        PartnerModel["Partner (Delivery Fleet, Ratings, Mercy Extensions)"]
+        WalletModel["PartnerWallet (Virtual Balance, Cash Holds, Ledger)"]
+        UserProfileModel["UserOrderProfile (Surcharges, Cancellations)"]
+    end
+
+    subgraph CatalogDB["2. Product Catalog Database (helping_services_catalog)"]
+        ProductModel["Product (Catalog, ₹ Pricing, Stock, SKUs)"]
+    end
+
+    subgraph AnalyticsDB["3. Analytics & Operations Database (helping_services_analytics)"]
+        OrderModel["Order (Lifecycle, Ring Delays, OTPs, 5:1 Mode)"]
+        LocModel["UserLocation (Live GPS, Breadcrumbs, 2dsphere)"]
+        DevModel["UserDevice (Hardware, Battery, OS Distribution)"]
+        GeoModel["GeofenceZone (Polygons, Circles, Delivery Hubs)"]
+        AlertModel["SecurityAlert (Spoofing, Jailbreak, Speed Alerts)"]
+        ProfileModel["UserInterestProfile (Behavioral Weights, RFM)"]
+        EventModel["ProductEvent (Clicks, Dwells, Cart Interactions)"]
+    end
+
+    Router -->|getCoreDb()| CoreDB
+    Router -->|getCatalogDb()| CatalogDB
+    Router -->|getAnalyticsDb()| AnalyticsDB
+```
 
 ```
 +====================================================================================================+
@@ -214,26 +245,40 @@ The Sub-Backend connects to MongoDB utilizing a single clustered TLS connection 
 +====================================================================================================+
 |                                                                                                    |
 |  1. CORE / IDENTITY DATABASE (helping_services_core)                                               |
-|     - Read-only / secondary connection for identity verification and partner contact details.      |
+|     - Connection: env.MONGODB_CORE_URL / getCoreDb()                                               |
+|     - Models: Partner, PartnerWallet, UserOrderProfile                                             |
+|     - Responsibilities: Fleet profile management, virtual wallet ledgers, user cancellation       |
+|       surcharge states (₹0.30 penalty on 2nd offense), and identity records.                       |
 |                                                                                                    |
 |  2. CATALOG / COMMERCE DATABASE (helping_services_catalog)                                         |
-|     - Product metadata, categories, target courses/departments.                                    |
+|     - Connection: env.MONGODB_CATALOG_URL / getCatalogDb()                                         |
+|     - Models: Product                                                                              |
+|     - Responsibilities: Authoritative product catalog, ₹ Rupee base pricing, active stock,         |
+|       discounted pricing, and SKU mappings managed via Admin panel.                                |
 |                                                                                                    |
-|  3. USER INTELLIGENCE & ANALYTICS DATABASE (helping_services_analytics) [PRIMARY FOR SUB-BACKEND]  |
-|     - UserLocation: Real-time and historical GPS telemetry indexed with 2dsphere.                  |
-|     - UserDevice: Time-series hardware, OS versions, emulator flags, rooted device logs.           |
-|     - GeofenceZone: Circular & polygon boundary definitions and containment zones.                 |
-|     - SecurityAlert: Security incidents lifecycle (open -> acknowledged -> resolved).             |
-|     - UserInterestProfile: Refined category affinities, tag weights, and engine feed overrides.    |
-|     - ProductEvent: Raw interaction events (views, cart additions, dwell times, purchases).        |
+|  3. USER INTELLIGENCE, OPERATIONS & ANALYTICS DATABASE (helping_services_analytics)                |
+|     - Connection: env.MONGODB_ANALYTICS_URL / getAnalyticsDb()                                     |
+|     - Models: Order, UserLocation, UserDevice, GeofenceZone, SecurityAlert,                        |
+|       UserInterestProfile, ProductEvent                                                            |
+|     - Responsibilities: Order lifecycle dispatching, 2.5km ring partitioning, 6-digit OTP          |
+|       verifications, live GPS streaming, device telemetry, speed/spoofing security alerts,         |
+|       and behavioral profile syntheses.                                                            |
 +====================================================================================================+
 ```
 
 ### Windows DNS & Local ISP Resolution Fix
-To prevent connection timeouts on Windows environments and local ISPs that block or corrupt SRV DNS lookups for MongoDB Atlas clusters (`cluster0.3p4hb11.mongodb.net`), the Sub-Backend explicitly initializes authoritative public recursive resolvers before socket creation:
+To prevent connection timeouts on Windows environments and local ISPs that block or corrupt SRV DNS lookups for MongoDB Atlas clusters (`cluster0.pyawg8c.mongodb.net`, `cluster0.vmzf51i.mongodb.net`, `cluster0.3p4hb11.mongodb.net`), the Sub-Backend explicitly initializes authoritative public recursive resolvers before socket creation:
 ```typescript
-dns.setServers(['8.8.8.8', '1.1.1.1']);
+dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 ```
+
+### Multi-Database Connection & Testing Strategy
+- **Production Multi-Cluster Mode (`isMultiCluster = true`)**:
+  Creates 3 dedicated connection pools via `mongoose.createConnection(...)` with configured pool sizes (`minPoolSize: 10`, `maxPoolSize: 50`) and health probes. All three clusters connect in parallel upon startup.
+- **In-Memory & Test Mode (`NODE_ENV === 'test'`)**:
+  Connects to a single `MongoMemoryServer` instance and dynamically provides isolated logical database namespaces via `mongoose.connection.useDb(dbName, { useCache: true })`. This guarantees 100% automated test isolation and eliminates port collisions or external Atlas dependencies during CI/CD.
+- **Background Index Synchronization (`ensureIndexes()`)**:
+  Iterates across all 3 databases (`getCoreDb()`, `getCatalogDb()`, `getAnalyticsDb()`) and ensures 2dsphere, unique compound, and TTL indexes are cleanly synchronized on boot.
 
 ---
 

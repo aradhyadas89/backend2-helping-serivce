@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getCatalogDb } from '../config/database';
 
 export interface IProduct extends Document {
   title: string;
@@ -115,6 +115,7 @@ export const ProductSchema = new Schema<IProduct>(
 ProductSchema.index({ category: 1, isActive: 1 });
 
 export const getProductModel = (): Model<IProduct> => {
-  const db = getAnalyticsDb();
+  const db = getCatalogDb();
   return db.models.Product || db.model<IProduct>('Product', ProductSchema);
 };
+
