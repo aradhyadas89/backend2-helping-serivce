@@ -1,14 +1,21 @@
-import { Document, Schema, Model } from 'mongoose';
-import { getTelemetryDb } from '../config/database';
+import { Document, Schema, Model } from "mongoose";
+import { getTelemetryDb } from "../config/database";
 
-export type OSName = 'ios' | 'android' | 'web' | 'windows' | 'macos' | 'linux' | 'other';
-export type DeviceType = 'mobile' | 'tablet' | 'desktop' | 'other';
+export type OSName =
+  | "ios"
+  | "android"
+  | "web"
+  | "windows"
+  | "macos"
+  | "linux"
+  | "other";
+export type DeviceType = "mobile" | "tablet" | "desktop" | "other";
 
 export interface IUserDevice extends Document {
   userId: string;
   userName?: string;
   userEmail?: string;
-  role: 'user' | 'partner' | 'admin';
+  role: "user" | "partner" | "admin";
   osName: OSName;
   osVersion?: string;
   deviceBrand?: string;
@@ -47,13 +54,13 @@ export const UserDeviceSchema = new Schema<IUserDevice>(
     },
     role: {
       type: String,
-      enum: ['user', 'partner', 'admin'],
-      default: 'user',
+      enum: ["user", "partner", "admin"],
+      default: "user",
       index: true,
     },
     osName: {
       type: String,
-      enum: ['ios', 'android', 'web', 'windows', 'macos', 'linux', 'other'],
+      enum: ["ios", "android", "web", "windows", "macos", "linux", "other"],
       required: true,
       index: true,
     },
@@ -71,8 +78,8 @@ export const UserDeviceSchema = new Schema<IUserDevice>(
     },
     deviceType: {
       type: String,
-      enum: ['mobile', 'tablet', 'desktop', 'other'],
-      default: 'mobile',
+      enum: ["mobile", "tablet", "desktop", "other"],
+      default: "mobile",
     },
     appVersion: {
       type: String,
@@ -139,7 +146,7 @@ export const UserDeviceSchema = new Schema<IUserDevice>(
         return ret;
       },
     },
-  }
+  },
 );
 
 UserDeviceSchema.index({ userId: 1, timestamp: -1 });
@@ -148,6 +155,8 @@ UserDeviceSchema.index({ timestamp: -1 });
 
 export const getUserDeviceModel = (): Model<IUserDevice> => {
   const db = getTelemetryDb();
-  return db.models.UserDevice || db.model<IUserDevice>('UserDevice', UserDeviceSchema);
+  return (
+    db.models.UserDevice ||
+    db.model<IUserDevice>("UserDevice", UserDeviceSchema)
+  );
 };
-
