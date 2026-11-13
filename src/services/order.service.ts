@@ -7,6 +7,7 @@ import { pricingService } from './pricing.service';
 import { partnerDispatchService } from './partner-dispatch.service';
 import { travelTimerService } from './travel-timer.service';
 import { wsDispatcher } from '../websocket/ws-dispatcher';
+import { emailService } from './email.service';
 import { calculateHaversineDistance } from '../utils/geo.utils';
 import { logger } from '../config/logger';
 import {
@@ -261,6 +262,9 @@ export class OrderService {
       throw new NotFoundException(`Order ${orderId} assigned to partner not found`);
     }
 
+    const Partner = getPartnerModel();
+    const partner = await Partner.findOne({ partnerId });
+
     const otp = this.generate6DigitOtp();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes expiry
 
@@ -276,6 +280,18 @@ export class OrderService {
         otp,
       });
 
+      // Dispatch real email via SMTP
+      if (order.userEmail) {
+        await emailService.sendCashPickupOtpEmail({
+          email: order.userEmail,
+          userName: order.userName,
+          orderId: order.orderId,
+          otp,
+          partnerName: partner?.name,
+          amount: order.totalAmount,
+        });
+      }
+
       logger.info(`[CASH OTP DISPATCHED] Order ${order.orderId} - OTP: ${otp} sent to ${order.userEmail}`);
     } else {
       order.deliveryOtp = otp;
@@ -289,6 +305,17 @@ export class OrderService {
         message: 'Partner has arrived with your order! Please share delivery OTP with partner.',
         otp,
       });
+
+      // Dispatch real email via SMTP
+      if (order.userEmail) {
+        await emailService.sendDeliveryOtpEmail({
+          email: order.userEmail,
+          userName: order.userName,
+          orderId: order.orderId,
+          otp,
+          partnerName: partner?.name,
+        });
+      }
 
       logger.info(`[DELIVERY OTP DISPATCHED] Order ${order.orderId} - OTP: ${otp} sent to ${order.userEmail}`);
     }

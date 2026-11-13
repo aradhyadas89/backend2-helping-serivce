@@ -78,6 +78,15 @@ export const env = {
   UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL || '',
   UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN || '',
 
+  // Email Configuration (SMTP / Nodemailer)
+  SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
+  SMTP_PORT: parseInt(process.env.SMTP_PORT || '465', 10),
+  SMTP_USER: process.env.SMTP_USER || '',
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  SMTP_FROM: process.env.SMTP_FROM || 'Helping Services <helpingservicesteam@gmail.com>',
+  SMTP_SECURE: process.env.SMTP_SECURE === 'true' || process.env.SMTP_SECURE === undefined,
+  OTP_EXPIRES_IN_MINUTES: parseInt(process.env.OTP_EXPIRES_IN_MINUTES || '10', 10),
+
   // Real-Time & Analytics Rules
   MAX_STREAM_BUFFER_SIZE: parseInt(process.env.MAX_STREAM_BUFFER_SIZE || '2000', 10),
   LIVE_LOCATION_EXPIRY_MINUTES: parseInt(process.env.LIVE_LOCATION_EXPIRY_MINUTES || '30', 10),
