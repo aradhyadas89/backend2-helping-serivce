@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getTelemetryDb } from '../config/database';
 
 export type AlertType =
   | 'rooted_or_jailbroken'
@@ -141,7 +141,7 @@ SecurityAlertSchema.index({ status: 1, severity: 1, createdAt: -1 });
 SecurityAlertSchema.index({ userId: 1, createdAt: -1 });
 
 export const getSecurityAlertModel = (): Model<ISecurityAlert> => {
-  const db = getAnalyticsDb();
+  const db = getTelemetryDb();
   return db.models.SecurityAlert || db.model<ISecurityAlert>('SecurityAlert', SecurityAlertSchema);
 };
 

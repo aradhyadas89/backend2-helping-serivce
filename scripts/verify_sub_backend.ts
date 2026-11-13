@@ -1,9 +1,9 @@
 import {
   connectDB,
   closeDB,
-  getCoreDb,
-  getCatalogDb,
-  getAnalyticsDb,
+  getOrdersDb,
+  getFleetDb,
+  getTelemetryDb,
   getDatabaseHealth,
   isMultiCluster,
 } from '../src/config/database';
@@ -12,7 +12,8 @@ import { logger } from '../src/config/logger';
 
 async function verify() {
   logger.info('========================================================');
-  logger.info('--- Verifying Sub-Backend 3 Interconnected Databases ---');
+  logger.info('--- Verifying Sub-Backend 2 Interconnected Databases ---');
+  logger.info('    (Completely Independent from Main Backend DBs)      ');
   logger.info('========================================================');
   logger.info(`Port: ${env.PORT}`);
   logger.info(`Target Environment: ${env.ENVIRONMENT}`);
@@ -23,38 +24,44 @@ async function verify() {
     await connectDB();
 
     const health = getDatabaseHealth();
-    logger.info('--- Interconnected Database Status ---');
+    logger.info('--- Sub-Backend 2 Interconnected Database Status ---');
 
-    // 1. Core Database
-    const core = getCoreDb();
-    const coreCols = await core.db?.listCollections().toArray();
+    // 1. Orders & Billing Database
+    const orders = getOrdersDb();
+    const ordersCols = await orders.db?.listCollections().toArray();
     logger.info(
-      `1. Core DB [${health.databases.core.name}]: State=${core.readyState} (${health.databases.core.status})`
-    );
-    logger.info(`   Collections (${coreCols?.length || 0}):`, coreCols?.map((c) => c.name) || []);
-
-    // 2. Catalog Database
-    const catalog = getCatalogDb();
-    const catalogCols = await catalog.db?.listCollections().toArray();
-    logger.info(
-      `2. Catalog DB [${health.databases.catalog.name}]: State=${catalog.readyState} (${health.databases.catalog.status})`
-    );
-    logger.info(`   Collections (${catalogCols?.length || 0}):`, catalogCols?.map((c) => c.name) || []);
-
-    // 3. Analytics Database
-    const analytics = getAnalyticsDb();
-    const analyticsCols = await analytics.db?.listCollections().toArray();
-    logger.info(
-      `3. Analytics DB [${health.databases.analytics.name}]: State=${analytics.readyState} (${health.databases.analytics.status})`
+      `1. Orders & Billing DB [${health.databases.orders.name}]: State=${orders.readyState} (${health.databases.orders.status})`
     );
     logger.info(
-      `   Collections (${analyticsCols?.length || 0}):`,
-      analyticsCols?.map((c) => c.name) || []
+      `   Collections (${ordersCols?.length || 0}):`,
+      ordersCols?.map((c) => c.name) || []
+    );
+
+    // 2. Partner Fleet & Wallets Database
+    const fleet = getFleetDb();
+    const fleetCols = await fleet.db?.listCollections().toArray();
+    logger.info(
+      `2. Partner Fleet & Wallets DB [${health.databases.fleet.name}]: State=${fleet.readyState} (${health.databases.fleet.status})`
+    );
+    logger.info(
+      `   Collections (${fleetCols?.length || 0}):`,
+      fleetCols?.map((c) => c.name) || []
+    );
+
+    // 3. Real-Time Telemetry & Geofencing Database
+    const telemetry = getTelemetryDb();
+    const telemetryCols = await telemetry.db?.listCollections().toArray();
+    logger.info(
+      `3. Real-Time Telemetry & Geofencing DB [${health.databases.telemetry.name}]: State=${telemetry.readyState} (${health.databases.telemetry.status})`
+    );
+    logger.info(
+      `   Collections (${telemetryCols?.length || 0}):`,
+      telemetryCols?.map((c) => c.name) || []
     );
 
     await closeDB();
     logger.info('========================================================');
-    logger.info('--- 3 Interconnected Databases Verified Successfully ---');
+    logger.info('--- Sub-Backend 2 Databases Verified Successfully ---');
     logger.info('========================================================');
     process.exit(0);
   } catch (err) {

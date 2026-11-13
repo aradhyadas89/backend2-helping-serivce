@@ -204,9 +204,9 @@ graph TD
 
 ---
 
-## 5. Multi-Database Architecture & 3 Interconnected Clusters
+## 5. Multi-Database Architecture & 3 Dedicated Interconnected Databases
 
-`backend2-helping-service` connects directly to **3 dedicated, interconnected MongoDB databases** (both in dedicated multi-cluster Atlas production mode and cached multi-database in-memory test mode):
+`backend2-helping-service` connects directly to **3 dedicated, interconnected MongoDB databases** that are **completely separated from the Main Backend databases** (`helping_services_*`):
 
 ```mermaid
 flowchart TD
@@ -214,18 +214,18 @@ flowchart TD
         Router["Model & Query Dispatcher"]
     end
 
-    subgraph CoreDB["1. Core / Identity Database (helping_services_core)"]
-        PartnerModel["Partner (Delivery Fleet, Ratings, Mercy Extensions)"]
-        WalletModel["PartnerWallet (Virtual Balance, Cash Holds, Ledger)"]
+    subgraph OrdersDB["1. Orders & Billing Database (helping_sub2_orders)"]
+        OrderModel["Order (State Machine, Ring Delays, OTPs, 5:1 Mode)"]
+        ProductModel["Product (Catalog, ₹ Pricing, Stock, SKUs)"]
         UserProfileModel["UserOrderProfile (Surcharges, Cancellations)"]
     end
 
-    subgraph CatalogDB["2. Product Catalog Database (helping_services_catalog)"]
-        ProductModel["Product (Catalog, ₹ Pricing, Stock, SKUs)"]
+    subgraph FleetDB["2. Partner Fleet & Wallets Database (helping_sub2_fleet)"]
+        PartnerModel["Partner (Delivery Fleet, Ratings, Mercy Extensions)"]
+        WalletModel["PartnerWallet (Virtual Balance, Cash Holds, Ledger)"]
     end
 
-    subgraph AnalyticsDB["3. Analytics & Operations Database (helping_services_analytics)"]
-        OrderModel["Order (Lifecycle, Ring Delays, OTPs, 5:1 Mode)"]
+    subgraph TelemetryDB["3. Real-Time Telemetry & Geofencing Database (helping_sub2_telemetry)"]
         LocModel["UserLocation (Live GPS, Breadcrumbs, 2dsphere)"]
         DevModel["UserDevice (Hardware, Battery, OS Distribution)"]
         GeoModel["GeofenceZone (Polygons, Circles, Delivery Hubs)"]
@@ -234,35 +234,39 @@ flowchart TD
         EventModel["ProductEvent (Clicks, Dwells, Cart Interactions)"]
     end
 
-    Router -->|getCoreDb()| CoreDB
-    Router -->|getCatalogDb()| CatalogDB
-    Router -->|getAnalyticsDb()| AnalyticsDB
+    Router -->|getOrdersDb()| OrdersDB
+    Router -->|getFleetDb()| FleetDB
+    Router -->|getTelemetryDb()| TelemetryDB
 ```
 
 ```
 +====================================================================================================+
-|                                3 INTERCONNECTED MONGODB DATABASES                                  |
+|                    3 DEDICATED SUB-BACKEND 2 INTERCONNECTED MONGODB DATABASES                      |
+|                     (Strictly Separate from Main Backend's Databases)                              |
 +====================================================================================================+
 |                                                                                                    |
-|  1. CORE / IDENTITY DATABASE (helping_services_core)                                               |
-|     - Connection: env.MONGODB_CORE_URL / getCoreDb()                                               |
-|     - Models: Partner, PartnerWallet, UserOrderProfile                                             |
-|     - Responsibilities: Fleet profile management, virtual wallet ledgers, user cancellation       |
-|       surcharge states (₹0.30 penalty on 2nd offense), and identity records.                       |
+|  1. ORDERS & BILLING DATABASE (helping_sub2_orders)                                                |
+|     - Connection: env.MONGODB_ORDERS_URL / getOrdersDb()                                           |
+|     - Models: Order, Product, UserOrderProfile                                                     |
+|     - Responsibilities: Order lifecycle management, 2.5km ring partitioning & delays,             |
+|       1-minute payment countdown window, 5:1 online-to-offline payment ratio, 6-digit OTP          |
+|       verification handshakes, product pricing calculations, ₹30 minimum order threshold,          |
+|       and ₹0.30 repeated cancellation penalty surcharges.                                          |
 |                                                                                                    |
-|  2. CATALOG / COMMERCE DATABASE (helping_services_catalog)                                         |
-|     - Connection: env.MONGODB_CATALOG_URL / getCatalogDb()                                         |
-|     - Models: Product                                                                              |
-|     - Responsibilities: Authoritative product catalog, ₹ Rupee base pricing, active stock,         |
-|       discounted pricing, and SKU mappings managed via Admin panel.                                |
+|  2. PARTNER FLEET & WALLETS DATABASE (helping_sub2_fleet)                                          |
+|     - Connection: env.MONGODB_FLEET_URL / getFleetDb()                                             |
+|     - Models: Partner, PartnerWallet                                                               |
+|     - Responsibilities: Delivery fleet profiles, ratings (1.0-5.0), reputation scores (0-100),     |
+|       live online/offline status, vehicle dynamics (cycle @ 15km/h, walk @ 4.5km/h),               |
+|       mercy travel extensions, and partner virtual wallet ledgers & pending cash holds.            |
 |                                                                                                    |
-|  3. USER INTELLIGENCE, OPERATIONS & ANALYTICS DATABASE (helping_services_analytics)                |
-|     - Connection: env.MONGODB_ANALYTICS_URL / getAnalyticsDb()                                     |
-|     - Models: Order, UserLocation, UserDevice, GeofenceZone, SecurityAlert,                        |
+|  3. REAL-TIME TELEMETRY & GEOFENCING DATABASE (helping_sub2_telemetry)                             |
+|     - Connection: env.MONGODB_TELEMETRY_URL / getTelemetryDb()                                     |
+|     - Models: UserLocation, UserDevice, GeofenceZone, SecurityAlert,                               |
 |       UserInterestProfile, ProductEvent                                                            |
-|     - Responsibilities: Order lifecycle dispatching, 2.5km ring partitioning, 6-digit OTP          |
-|       verifications, live GPS streaming, device telemetry, speed/spoofing security alerts,         |
-|       and behavioral profile syntheses.                                                            |
+|     - Responsibilities: High-frequency GPS streaming (2dsphere indexing), breadcrumb history,      |
+|       device hardware health, battery percentages & OS market shares, circular/polygon geofencing,  |
+|       GPS spoofing & speed violation alerts, and behavioral affinity vector computation.           |
 +====================================================================================================+
 ```
 

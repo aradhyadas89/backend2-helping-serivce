@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getTelemetryDb } from '../config/database';
 
 export interface IUserLocation extends Document {
   userId: string;
@@ -127,7 +127,7 @@ UserLocationSchema.index({ userId: 1, timestamp: -1 });
 UserLocationSchema.index({ timestamp: -1 });
 
 export const getUserLocationModel = (): Model<IUserLocation> => {
-  const db = getAnalyticsDb();
+  const db = getTelemetryDb();
   return db.models.UserLocation || db.model<IUserLocation>('UserLocation', UserLocationSchema);
 };
 

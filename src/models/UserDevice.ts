@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getTelemetryDb } from '../config/database';
 
 export type OSName = 'ios' | 'android' | 'web' | 'windows' | 'macos' | 'linux' | 'other';
 export type DeviceType = 'mobile' | 'tablet' | 'desktop' | 'other';
@@ -147,7 +147,7 @@ UserDeviceSchema.index({ osName: 1, timestamp: -1 });
 UserDeviceSchema.index({ timestamp: -1 });
 
 export const getUserDeviceModel = (): Model<IUserDevice> => {
-  const db = getAnalyticsDb();
+  const db = getTelemetryDb();
   return db.models.UserDevice || db.model<IUserDevice>('UserDevice', UserDeviceSchema);
 };
 

@@ -215,22 +215,22 @@ npm test
 
 ## 11. Multi-Database Interconnect & Data Governance Rules
 
-### Rule 11.1: 3 Interconnected Database Boundaries
-- All persistent data MUST be routed to its designated database instance:
-  1. **Core Database (`helping_services_core`)**:
-     - `Partner`, `PartnerWallet`, `UserOrderProfile`, User identity, and authorization credentials.
-  2. **Catalog Database (`helping_services_catalog`)**:
-     - `Product` (titles, pricing in ₹, inventory stock, SKUs, active categories).
-  3. **Analytics & Operations Database (`helping_services_analytics`)**:
-     - `Order` (state machine, ring delays, OTPs, timer countdowns), `UserLocation`, `UserDevice`, `GeofenceZone`, `SecurityAlert`, `UserInterestProfile`, `ProductEvent`.
+### Rule 11.1: 3 Dedicated Sub-Backend 2 Database Boundaries
+- All persistent data in Sub-Backend 2 MUST be routed to its designated database instance (completely separate from Main Backend):
+  1. **Orders & Billing Database (`helping_sub2_orders`)**:
+     - `Order` (state machine, ring delays, OTPs, timer countdowns, 5:1 ratio), `Product` (pricing in ₹, catalog), and `UserOrderProfile` (cancellations & ₹0.30 surcharge penalty).
+  2. **Partner Fleet & Wallets Database (`helping_sub2_fleet`)**:
+     - `Partner` (fleet profiles, live state, vehicle dynamics, ratings, mercy extensions) and `PartnerWallet` (virtual ledger balances, cash holds).
+  3. **Real-Time Telemetry & Geofencing Database (`helping_sub2_telemetry`)**:
+     - `UserLocation` (live GPS, breadcrumbs, 2dsphere), `UserDevice` (battery, OS distribution), `GeofenceZone`, `SecurityAlert`, `UserInterestProfile`, `ProductEvent`.
 
 ### Rule 11.2: Dynamic Model Compilation via Connection Getters
 - Mongoose models MUST NEVER be registered on the global default `mongoose` connection object.
-- Every model file in `src/models/*.ts` MUST export a dynamic getter function (`getCoreDb()`, `getCatalogDb()`, or `getAnalyticsDb()`) that compiles and caches the schema onto its dedicated connection instance.
+- Every model file in `src/models/*.ts` MUST export a dynamic getter function (`getOrdersDb()`, `getFleetDb()`, or `getTelemetryDb()`) that compiles and caches the schema onto its dedicated connection instance.
 
 ### Rule 11.3: Cross-Database Referential Integrity
 - Because models reside on distinct database clusters in production Atlas environments, MongoDB `$lookup` aggregations across separate databases are strictly prohibited.
-- Cross-database relationships (e.g., `Order` referencing `Product.sku` or `Partner.partnerId`) MUST be resolved application-side using asynchronous service queries.
+- Cross-database relationships (e.g., `Order` referencing `Partner.partnerId` or `Product.sku`) MUST be resolved application-side using asynchronous service queries.
 
 ### Rule 11.4: In-Memory Multi-Database Test Isolation
 - During test execution (`NODE_ENV === 'test'`), all 3 logical databases MUST run on `mongodb-memory-server` isolated via `useDb(dbName, { useCache: true })`.

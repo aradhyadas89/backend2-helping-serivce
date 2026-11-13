@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getTelemetryDb } from '../config/database';
 
 export type GeofenceShape = 'circle' | 'polygon';
 
@@ -107,7 +107,7 @@ GeofenceZoneSchema.index({ 'center': '2dsphere' });
 GeofenceZoneSchema.index({ 'geometry': '2dsphere' });
 
 export const getGeofenceZoneModel = (): Model<IGeofenceZone> => {
-  const db = getAnalyticsDb();
+  const db = getTelemetryDb();
   return db.models.GeofenceZone || db.model<IGeofenceZone>('GeofenceZone', GeofenceZoneSchema);
 };
 

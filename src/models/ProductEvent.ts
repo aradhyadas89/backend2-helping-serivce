@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getTelemetryDb } from '../config/database';
 
 export type ProductEventType =
   | 'view'
@@ -73,7 +73,7 @@ ProductEventSchema.index({ category: 1, timestamp: -1 });
 ProductEventSchema.index({ eventType: 1, timestamp: -1 });
 
 export const getProductEventModel = (): Model<IProductEvent> => {
-  const db = getAnalyticsDb();
+  const db = getTelemetryDb();
   return db.models.ProductEvent || db.model<IProductEvent>('ProductEvent', ProductEventSchema);
 };
 

@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getOrdersDb } from '../config/database';
 
 export type OrderStatus =
   | 'SEARCHING_PARTNER'
@@ -277,7 +277,7 @@ OrderSchema.index({ userId: 1, createdAt: -1 });
 OrderSchema.index({ assignedPartnerId: 1, status: 1 });
 
 export const getOrderModel = (): Model<IOrder> => {
-  const db = getAnalyticsDb();
+  const db = getOrdersDb();
   return db.models.Order || db.model<IOrder>('Order', OrderSchema);
 };
 

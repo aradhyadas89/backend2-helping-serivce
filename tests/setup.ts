@@ -1,7 +1,7 @@
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import { env } from '../src/config/env';
-import { getCoreDb, getCatalogDb, getAnalyticsDb, closeDB } from '../src/config/database';
+import { getOrdersDb, getFleetDb, getTelemetryDb, closeDB } from '../src/config/database';
 
 let mongoServer: MongoMemoryServer;
 
@@ -11,6 +11,9 @@ beforeAll(async () => {
   const uri = mongoServer.getUri();
 
   env.MONGODB_URL = uri;
+  env.MONGODB_ORDERS_URL = uri;
+  env.MONGODB_FLEET_URL = uri;
+  env.MONGODB_TELEMETRY_URL = uri;
   env.MONGODB_ANALYTICS_URL = uri;
   env.MONGODB_CORE_URL = uri;
   env.MONGODB_CATALOG_URL = uri;
@@ -28,8 +31,8 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  // Clear collections across all 3 interconnected databases
-  const dbs = [getCoreDb(), getCatalogDb(), getAnalyticsDb(), mongoose.connection];
+  // Clear collections across all 3 Sub-Backend 2 interconnected databases
+  const dbs = [getOrdersDb(), getFleetDb(), getTelemetryDb(), mongoose.connection];
   for (const db of dbs) {
     if (db && db.readyState === 1) {
       const collections = db.collections;

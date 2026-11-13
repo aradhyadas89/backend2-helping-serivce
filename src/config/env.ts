@@ -35,21 +35,40 @@ export const env = {
   // Main Backend Interconnect
   MAIN_BACKEND_URL: process.env.MAIN_BACKEND_URL || 'http://localhost:8000',
 
-  // Database URLs (3 Interconnected MongoDB Databases)
-  MONGODB_URL: process.env.MONGODB_URL || 'mongodb://localhost:27017/helping_services_analytics',
-  MONGODB_DB_NAME: process.env.MONGODB_DB_NAME || 'helping_services_analytics',
-  
-  // 1. Core / Identity DB (Users, Roles, Partner Profiles, Wallets, User Order Profiles)
-  MONGODB_CORE_URL: process.env.MONGODB_CORE_URL || '',
-  MONGODB_CORE_DB_NAME: process.env.MONGODB_CORE_DB_NAME || 'helping_services_core',
+  // Database URLs (3 Dedicated Sub-Backend 2 Interconnected Databases - Completely Separate from Main DB)
+  MONGODB_URL: process.env.MONGODB_URL || 'mongodb://localhost:27017/helping_sub2_orders',
+  MONGODB_DB_NAME: process.env.MONGODB_DB_NAME || 'helping_sub2_orders',
 
-  // 2. Product Catalog DB (Admin Uploads, Products, Pricing in ₹, Categories, Stock)
-  MONGODB_CATALOG_URL: process.env.MONGODB_CATALOG_URL || '',
-  MONGODB_CATALOG_DB_NAME: process.env.MONGODB_CATALOG_DB_NAME || 'helping_services_catalog',
+  // 1. Orders & Billing DB (Orders, Product Catalog & Pricing, User Order Profiles & Surcharges)
+  MONGODB_ORDERS_URL:
+    process.env.MONGODB_ORDERS_URL ||
+    process.env.MONGODB_URL ||
+    process.env.MONGODB_CATALOG_URL ||
+    '',
+  MONGODB_ORDERS_DB_NAME: process.env.MONGODB_ORDERS_DB_NAME || 'helping_sub2_orders',
 
-  // 3. User Intelligence & Analytics DB (Live Locations, Orders, Lifecycle, Devices, Alerts)
-  MONGODB_ANALYTICS_URL: process.env.MONGODB_ANALYTICS_URL || process.env.MONGODB_URL || '',
-  MONGODB_ANALYTICS_DB_NAME: process.env.MONGODB_ANALYTICS_DB_NAME || 'helping_services_analytics',
+  // 2. Partner Fleet & Wallets DB (Partner Profiles, Live States, Vehicle Types, Wallets & Cash Holds)
+  MONGODB_FLEET_URL:
+    process.env.MONGODB_FLEET_URL ||
+    process.env.MONGODB_CORE_URL ||
+    '',
+  MONGODB_FLEET_DB_NAME: process.env.MONGODB_FLEET_DB_NAME || 'helping_sub2_fleet',
+
+  // 3. Real-Time Telemetry & Geofencing DB (GPS Streams, Breadcrumbs, Device Health, Geofences, Security Alerts)
+  MONGODB_TELEMETRY_URL:
+    process.env.MONGODB_TELEMETRY_URL ||
+    process.env.MONGODB_ANALYTICS_URL ||
+    process.env.MONGODB_URL ||
+    '',
+  MONGODB_TELEMETRY_DB_NAME: process.env.MONGODB_TELEMETRY_DB_NAME || 'helping_sub2_telemetry',
+
+  // Legacy compatibility aliases
+  MONGODB_CORE_URL: process.env.MONGODB_FLEET_URL || process.env.MONGODB_CORE_URL || '',
+  MONGODB_CORE_DB_NAME: process.env.MONGODB_FLEET_DB_NAME || 'helping_sub2_fleet',
+  MONGODB_CATALOG_URL: process.env.MONGODB_ORDERS_URL || process.env.MONGODB_CATALOG_URL || '',
+  MONGODB_CATALOG_DB_NAME: process.env.MONGODB_ORDERS_DB_NAME || 'helping_sub2_orders',
+  MONGODB_ANALYTICS_URL: process.env.MONGODB_TELEMETRY_URL || process.env.MONGODB_ANALYTICS_URL || '',
+  MONGODB_ANALYTICS_DB_NAME: process.env.MONGODB_TELEMETRY_DB_NAME || 'helping_sub2_telemetry',
 
   MONGODB_MAX_POOL_SIZE: parseInt(process.env.MONGODB_MAX_POOL_SIZE || '50', 10),
   MONGODB_MIN_POOL_SIZE: parseInt(process.env.MONGODB_MIN_POOL_SIZE || '10', 10),

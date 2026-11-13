@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getCoreDb } from '../config/database';
+import { getOrdersDb } from '../config/database';
 
 export interface IUserOrderProfile extends Document {
   userId: string;
@@ -52,7 +52,7 @@ export const UserOrderProfileSchema = new Schema<IUserOrderProfile>(
 );
 
 export const getUserOrderProfileModel = (): Model<IUserOrderProfile> => {
-  const db = getCoreDb();
+  const db = getOrdersDb();
   return db.models.UserOrderProfile || db.model<IUserOrderProfile>('UserOrderProfile', UserOrderProfileSchema);
 };
 

@@ -1,5 +1,5 @@
 import { Document, Schema, Model } from 'mongoose';
-import { getAnalyticsDb } from '../config/database';
+import { getTelemetryDb } from '../config/database';
 
 export interface ICategoryAffinity {
   category: string;
@@ -120,7 +120,7 @@ export const UserInterestProfileSchema = new Schema<IUserInterestProfile>(
 );
 
 export const getUserInterestProfileModel = (): Model<IUserInterestProfile> => {
-  const db = getAnalyticsDb();
+  const db = getTelemetryDb();
   return (
     db.models.UserInterestProfile ||
     db.model<IUserInterestProfile>('UserInterestProfile', UserInterestProfileSchema)
