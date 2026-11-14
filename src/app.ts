@@ -7,6 +7,8 @@ import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { correlationMiddleware } from './middlewares/correlation';
 import { errorHandler, NotFoundException } from './middlewares/errorHandler';
+import { getDatabaseHealth } from './config/database';
+import { wsDispatcher } from './websocket/ws-dispatcher';
 import apiRouter from './routes';
 
 export function createApp(): Application {
@@ -105,6 +107,25 @@ export function createApp(): Application {
       role: 'Sub-Backend for Helper-FullStack-Backend',
       status: 'operational',
       documentation: `${env.API_V1_STR}/health`,
+    });
+  });
+
+  // Fast Live Ping & Heartbeat Probes
+  app.get(['/ping', '/live-ping', `${env.API_V1_STR}/ping`], (_req: Request, res: Response) => {
+    const dbHealth = getDatabaseHealth();
+    res.status(200).json({
+      success: true,
+      status: 'live',
+      ping: 'pong',
+      timestamp: new Date().toISOString(),
+      uptimeSeconds: Math.round(process.uptime()),
+      activeWebSockets: wsDispatcher.getActiveCount(),
+      databases: {
+        allConnected: dbHealth.allConnected,
+        orders: dbHealth.databases.orders,
+        fleet: dbHealth.databases.fleet,
+        telemetry: dbHealth.databases.telemetry,
+      },
     });
   });
 

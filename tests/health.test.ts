@@ -20,6 +20,24 @@ describe('Health and System Status Probes', () => {
     expect(res.body.system).toBeDefined();
   });
 
+  it('GET /ping and /live-ping should return fast 200 pong status', async () => {
+    const pingRes = await request(app).get('/ping');
+    expect(pingRes.status).toBe(200);
+    expect(pingRes.body.success).toBe(true);
+    expect(pingRes.body.ping).toBe('pong');
+    expect(pingRes.body.status).toBe('live');
+    expect(pingRes.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
+
+    const livePingRes = await request(app).get('/live-ping');
+    expect(livePingRes.status).toBe(200);
+    expect(livePingRes.body.ping).toBe('pong');
+
+    const healthPingRes = await request(app).get('/api/v1/health/ping');
+    expect(healthPingRes.status).toBe(200);
+    expect(healthPingRes.body.ping).toBe('pong');
+    expect(healthPingRes.body.status).toBe('live');
+  });
+
   it('GET /unknown-route should return 404 formatted error', async () => {
     const res = await request(app).get('/api/v1/non-existent-endpoint');
     expect(res.status).toBe(404);

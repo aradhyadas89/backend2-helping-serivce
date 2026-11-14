@@ -33,6 +33,18 @@ export const partnerUpdateLocationSchema = z.object({
   heading: z.number().min(0).max(360).optional(),
 });
 
+export const partnerLivePingSchema = z.object({
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  speed: z.number().min(0).optional(),
+  heading: z.number().min(0).max(360).optional(),
+  batteryLevel: z.number().min(0).max(100).optional(),
+  isCharging: z.boolean().optional(),
+  networkStatus: z.enum(['wifi', '4g', '5g', '3g', 'offline']).optional(),
+});
+
+export type PartnerLivePingInput = z.infer<typeof partnerLivePingSchema>;
+
 export const partnerMarkReachedSchema = z.object({
   stage: z.enum(['cash', 'delivery']),
   latitude: z.number().min(-90).max(90).optional(),

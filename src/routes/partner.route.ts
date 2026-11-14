@@ -5,12 +5,16 @@ import {
   loginPartnerSchema,
   togglePartnerOnlineSchema,
   partnerUpdateLocationSchema,
+  partnerLivePingSchema,
 } from '../schemas/partner.schema';
 import { getPartnerModel } from '../models/Partner';
 import { getPartnerWalletModel } from '../models/PartnerWallet';
 import { partnerDispatchService } from '../services/partner-dispatch.service';
 import { partnerAnalysisService } from '../services/partner-analysis.service';
 import { orderService } from '../services/order.service';
+import { locationStreamService } from '../services/location-stream.service';
+import { getCacheClient } from '../config/redis';
+import { wsDispatcher } from '../websocket/ws-dispatcher';
 import { hashPassword, verifyPassword, generatePartnerToken } from '../utils/auth.utils';
 import { sendSuccess } from '../utils/response.utils';
 import {
@@ -412,6 +416,103 @@ router.post(
         res,
         { partnerId: partner.partnerId, latitude, longitude },
         'Partner location updated'
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/partners/:partnerId/ping
+ * @desc    Live heartbeat & GPS telemetry ping for delivery partner mobile app
+ */
+router.post(
+  '/:partnerId/ping',
+  validateBody(partnerLivePingSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { partnerId } = req.params;
+      const { latitude, longitude, speed = 0, heading = 0, batteryLevel, isCharging, networkStatus } = req.body;
+      const Partner = getPartnerModel();
+
+      const updateFields: Record<string, any> = {
+        lastLocationUpdate: new Date(),
+        isOnline: true,
+      };
+
+      if (latitude !== undefined && longitude !== undefined) {
+        updateFields.latitude = latitude;
+        updateFields.longitude = longitude;
+        updateFields.currentLocation = {
+          type: 'Point',
+          coordinates: [longitude, latitude],
+        };
+
+        // Ingest into in-memory location stream buffer
+        await locationStreamService.ingestLocationEvent({
+          userId: partnerId,
+          role: 'partner',
+          latitude,
+          longitude,
+          speed,
+          heading,
+          accuracy: 5,
+          batteryLevel,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      const partner = await Partner.findOneAndUpdate(
+        { partnerId },
+        { $set: updateFields },
+        { new: true }
+      );
+
+      if (!partner) {
+        throw new NotFoundException(`Partner ${partnerId} not found`);
+      }
+
+      // Update Redis cache live presence key
+      const cache = getCacheClient();
+      await cache.set(
+        `partner:live:${partnerId}`,
+        JSON.stringify({
+          partnerId,
+          latitude: partner.latitude,
+          longitude: partner.longitude,
+          isOnline: partner.isOnline,
+          activeOrderId: partner.activeOrderId,
+          lastPingAt: new Date().toISOString(),
+          batteryLevel,
+          networkStatus,
+        }),
+        60
+      );
+
+      // Broadcast live ping to fleet WebSocket
+      wsDispatcher.broadcastLocation({
+        userId: partnerId,
+        role: 'partner',
+        latitude: partner.latitude || 0,
+        longitude: partner.longitude || 0,
+        speed,
+        heading,
+        orderId: partner.activeOrderId || undefined,
+        lastPingAt: new Date(),
+      });
+
+      return sendSuccess(
+        res,
+        {
+          partnerId,
+          status: 'online',
+          isOnline: partner.isOnline,
+          activeOrderId: partner.activeOrderId || null,
+          lastPingAt: new Date().toISOString(),
+          serverTimestamp: Date.now(),
+        },
+        'Live ping acknowledged successfully'
       );
     } catch (error) {
       next(error);

@@ -706,5 +706,33 @@ describe('Comprehensive Bug Test Suite: Multi-DB Sub-Backend Edge Cases', () => 
       expect(historyRes.body.data[0].category).toBe('withdrawal');
       expect(historyRes.body.total).toBe(2);
     });
+
+    it('should process partner live GPS and telemetry ping and maintain live status', async () => {
+      const pingRes = await request(app)
+        .post(`/api/v1/partners/${partner1Id}/ping`)
+        .send({
+          latitude: 22.5742,
+          longitude: 88.3653,
+          speed: 14.5,
+          heading: 180,
+          batteryLevel: 88,
+          isCharging: false,
+          networkStatus: '4g',
+        });
+
+      expect(pingRes.status).toBe(200);
+      expect(pingRes.body.success).toBe(true);
+      expect(pingRes.body.data.partnerId).toBe(partner1Id);
+      expect(pingRes.body.data.status).toBe('online');
+      expect(pingRes.body.data.isOnline).toBe(true);
+      expect(pingRes.body.data.lastPingAt).toBeDefined();
+
+      // Verify in Partner model
+      const Partner = getPartnerModel();
+      const updated = await Partner.findOne({ partnerId: partner1Id });
+      expect(updated?.latitude).toBe(22.5742);
+      expect(updated?.longitude).toBe(88.3653);
+      expect(updated?.isOnline).toBe(true);
+    });
   });
 });

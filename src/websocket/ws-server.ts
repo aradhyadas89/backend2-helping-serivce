@@ -194,8 +194,16 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
               })
             );
           }
-        } else if (msg.action === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+        } else if (msg.action === 'ping' || msg.action === 'live_ping') {
+          ws.send(
+            JSON.stringify({
+              type: msg.action === 'live_ping' ? 'live_pong' : 'pong',
+              status: 'live',
+              timestamp: new Date().toISOString(),
+              clientTime: msg.clientTime || undefined,
+              activeConnections: wsDispatcher.getActiveCount(),
+            })
+          );
         }
       } catch (err) {
         logger.debug('Malformed WebSocket message received:', err);

@@ -49,4 +49,26 @@ router.get('/', (_req: Request, res: Response) => {
   });
 });
 
+/**
+ * @route   GET /api/v1/health/ping
+ * @desc    Ultra-fast live ping probe for keepalive monitoring and load balancer checks
+ */
+router.get('/ping', (_req: Request, res: Response) => {
+  const dbHealth = getDatabaseHealth();
+  res.status(200).json({
+    success: true,
+    status: 'live',
+    ping: 'pong',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    activeWebSockets: wsDispatcher.getActiveCount(),
+    databases: {
+      allConnected: dbHealth.allConnected,
+      orders: dbHealth.databases.orders,
+      fleet: dbHealth.databases.fleet,
+      telemetry: dbHealth.databases.telemetry,
+    },
+  });
+});
+
 export default router;
