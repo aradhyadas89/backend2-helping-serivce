@@ -15,8 +15,33 @@ import { partnerDispatchService } from '../services/partner-dispatch.service';
 import { getOrderModel } from '../models/Order';
 import { sendSuccess } from '../utils/response.utils';
 import { NotFoundException } from '../middlewares/errorHandler';
+import { razorpayService } from '../services/razorpay.service';
+import { env } from '../config/env';
 
 const router = Router();
+
+/**
+ * @route   POST /api/v1/orders/webhook/razorpay
+ * @desc    Receive and process asynchronous Razorpay Webhooks (payment.captured, order.paid, etc.)
+ */
+router.post('/webhook/razorpay', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const signature = (req.headers['x-razorpay-signature'] as string) || '';
+    const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+
+    const isValid = razorpayService.verifyWebhookSignature(rawBody, signature);
+    if (!isValid && env.ENVIRONMENT === 'production') {
+      return res.status(400).json({ success: false, error: { code: 400, message: 'Invalid webhook signature' } });
+    }
+
+    const { event, payload } = req.body;
+    const result = await orderService.handleRazorpayWebhook(event, payload);
+
+    return res.status(200).json({ success: true, message: result.message });
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * @route   POST /api/v1/orders
@@ -197,7 +222,14 @@ router.post(
         req.body.paymentMode
       );
 
-      return sendSuccess(res, order, `Payment mode ${req.body.paymentMode} selected successfully.`);
+      const orderObj = order.toObject ? order.toObject() : { ...order };
+      if (order.paymentMode === 'ONLINE') {
+        orderObj.razorpayKeyId = env.RAZORPAY_KEY_ID;
+        orderObj.currency = 'INR';
+        orderObj.amountInPaise = Math.round(order.totalAmount * 100);
+      }
+
+      return sendSuccess(res, orderObj, `Payment mode ${req.body.paymentMode} selected successfully.`);
     } catch (error) {
       next(error);
     }
@@ -216,7 +248,8 @@ router.post(
       const order = await orderService.verifyOnlinePayment(
         req.params.orderId,
         req.body.razorpayOrderId,
-        req.body.razorpayPaymentId
+        req.body.razorpayPaymentId,
+        req.body.razorpaySignature
       );
 
       return sendSuccess(res, order, 'Online payment verified successfully. Partner wallet credited.');
@@ -225,6 +258,19 @@ router.post(
     }
   }
 );
+
+/**
+ * @route   GET /api/v1/orders/:orderId/payment-status
+ * @desc    Get order payment status, gateway details, and refund status
+ */
+router.get('/:orderId/payment-status', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const paymentStatus = await orderService.getOrderPaymentStatus(req.params.orderId);
+    return sendSuccess(res, paymentStatus, 'Order payment status retrieved successfully');
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * @route   POST /api/v1/orders/:orderId/partner-reached

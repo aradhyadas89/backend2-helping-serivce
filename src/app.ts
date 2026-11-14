@@ -72,6 +72,7 @@ export function createApp(): Application {
         'x-device-brand',
         'x-device-model',
         'x-os-version',
+        'x-razorpay-signature',
       ],
     })
   );
@@ -80,7 +81,14 @@ export function createApp(): Application {
   app.use(compression());
 
   // JSON Body Parser with 10mb limit for telemetry batch payloads
-  app.use(express.json({ limit: '10mb' }));
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // Global Zero-Trust NoSQL Operator Sanitizer

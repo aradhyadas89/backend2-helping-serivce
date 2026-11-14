@@ -34,6 +34,12 @@ export const env = {
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyASKhpfg8Ax1V7iTN5ZXx9Lzc2E-lX4_uI',
   MAPPLS_API_KEY: process.env.MAPPLS_API_KEY || 'epdccakxxpiaskznoidkzaqidtjaawiodxbl',
 
+  // Razorpay Payment Gateway
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || 'rzp_test_Sm2gHurbaF3hQG',
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || 'bGBP3yw2puNKeyyD8nVMYac5',
+  RAZORPAY_WEBHOOK_SECRET:
+    process.env.RAZORPAY_WEBHOOK_SECRET || 'helping-services-razorpay-webhook-secret-2026',
+
   // Main Backend Interconnect
   MAIN_BACKEND_URL: process.env.MAIN_BACKEND_URL || 'http://localhost:8000',
 

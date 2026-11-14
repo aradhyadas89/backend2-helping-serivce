@@ -9,7 +9,9 @@ import { travelTimerService } from './travel-timer.service';
 import { wsDispatcher } from '../websocket/ws-dispatcher';
 import { emailService } from './email.service';
 import { googleMapsService } from './google-maps.service';
+import { razorpayService } from './razorpay.service';
 import { calculateHaversineDistance } from '../utils/geo.utils';
+import { env } from '../config/env';
 import { logger } from '../config/logger';
 import {
   BadRequestException,
@@ -139,8 +141,17 @@ export class OrderService {
     order.paymentMode = paymentMode;
 
     if (paymentMode === 'ONLINE') {
-      // Setup Razorpay order simulation
-      order.razorpayOrderId = `order_rzp_${Date.now()}`;
+      // Create authentic Razorpay Order via gateway API
+      const rzpOrder = await razorpayService.createOrder({
+        amount: order.totalAmount,
+        currency: 'INR',
+        receipt: order.orderId,
+        notes: {
+          orderId: order.orderId,
+          userId: order.userId,
+        },
+      });
+      order.razorpayOrderId = rzpOrder.id;
       // Remains in PAYMENT_PENDING until payment gateway verifies
     } else {
       // OFFLINE Mode (Cash Pickup Flow)
@@ -195,7 +206,8 @@ export class OrderService {
   async verifyOnlinePayment(
     orderId: string,
     razorpayOrderId: string,
-    razorpayPaymentId: string
+    razorpayPaymentId: string,
+    razorpaySignature?: string
   ): Promise<IOrder> {
     const Order = getOrderModel();
     const order = await Order.findOne({ orderId });
@@ -208,10 +220,39 @@ export class OrderService {
       throw new BadRequestException('Order was not configured for ONLINE payment mode');
     }
 
+    if (order.isPaid) {
+      return order; // Idempotent check
+    }
+
+    // Razorpay Order ID validation
+    if (order.razorpayOrderId && order.razorpayOrderId !== razorpayOrderId) {
+      throw new BadRequestException(
+        `Razorpay order ID mismatch. Expected '${order.razorpayOrderId}', received '${razorpayOrderId}'`
+      );
+    }
+
+    // Cryptographic signature verification
+    if (razorpaySignature) {
+      const isValid = razorpayService.verifyPaymentSignature({
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
+      });
+
+      if (!isValid) {
+        throw new BadRequestException('Invalid Razorpay payment signature');
+      }
+    } else if (env.ENVIRONMENT === 'production') {
+      throw new BadRequestException('Razorpay signature is required in production environment');
+    }
+
     // Real money stays in platform Razorpay account.
     order.isPaid = true;
     order.razorpayOrderId = razorpayOrderId;
     order.razorpayPaymentId = razorpayPaymentId;
+    if (razorpaySignature) {
+      order.razorpaySignature = razorpaySignature;
+    }
     order.paidAt = new Date();
     order.status = 'PAID';
 
@@ -908,6 +949,25 @@ export class OrderService {
 
     order.status = 'CANCELLED_BY_USER';
 
+    // Automatic Razorpay Refund for paid online orders
+    if (order.isPaid && order.razorpayPaymentId) {
+      try {
+        const refund = await razorpayService.refundPayment(
+          order.razorpayPaymentId,
+          order.totalAmount,
+          { orderId: order.orderId, reason: reason || 'Customer cancelled order' }
+        );
+        order.refundStatus = 'COMPLETED';
+        order.razorpayRefundId = refund.id;
+        order.refundAmount = order.totalAmount;
+        order.refundedAt = new Date();
+        logger.info(`[REFUND] Processed refund ${refund.id} of ₹${order.totalAmount} for order ${order.orderId}`);
+      } catch (refundError) {
+        order.refundStatus = 'FAILED';
+        logger.error(`[REFUND ERROR] Failed to process refund for order ${order.orderId}:`, refundError);
+      }
+    }
+
     if (order.assignedPartnerId) {
       const Partner = getPartnerModel();
       await Partner.findOneAndUpdate(
@@ -963,6 +1023,87 @@ export class OrderService {
     })
       .select('-cashCollectionOtp -deliveryOtp')
       .sort({ createdAt: -1 });
+  }
+
+  /**
+   * 17. Inspect Payment Gateway Details & Status
+   */
+  async getOrderPaymentStatus(orderId: string): Promise<any> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId }).select('-cashCollectionOtp -deliveryOtp');
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    let gatewayDetails: any = null;
+    if (order.razorpayPaymentId) {
+      try {
+        gatewayDetails = await razorpayService.fetchPayment(order.razorpayPaymentId);
+      } catch (err: any) {
+        gatewayDetails = { error: err.message };
+      }
+    }
+
+    return {
+      orderId: order.orderId,
+      status: order.status,
+      paymentMode: order.paymentMode,
+      isPaid: order.isPaid,
+      paidAt: order.paidAt,
+      totalAmount: order.totalAmount,
+      razorpayOrderId: order.razorpayOrderId,
+      razorpayPaymentId: order.razorpayPaymentId,
+      refundStatus: order.refundStatus || 'NONE',
+      razorpayRefundId: order.razorpayRefundId,
+      refundAmount: order.refundAmount,
+      refundedAt: order.refundedAt,
+      gatewayDetails,
+    };
+  }
+
+  /**
+   * 18. Handle Asynchronous Razorpay Webhooks
+   */
+  async handleRazorpayWebhook(event: string, payload: any): Promise<{ handled: boolean; message: string }> {
+    logger.info(`[RAZORPAY WEBHOOK] Processing event '${event}'`);
+
+    const paymentEntity = payload?.payment?.entity;
+    const orderEntity = payload?.order?.entity;
+
+    const razorpayOrderId = paymentEntity?.order_id || orderEntity?.id;
+    const razorpayPaymentId = paymentEntity?.id;
+
+    if (!razorpayOrderId) {
+      return { handled: false, message: 'Missing order_id in webhook payload' };
+    }
+
+    const Order = getOrderModel();
+    const order = await Order.findOne({ razorpayOrderId });
+
+    if (!order) {
+      logger.warn(`[RAZORPAY WEBHOOK] Order not found for razorpayOrderId ${razorpayOrderId}`);
+      return { handled: false, message: `Order not found for ${razorpayOrderId}` };
+    }
+
+    if (event === 'payment.captured' || event === 'order.paid') {
+      if (!order.isPaid) {
+        await this.verifyOnlinePayment(
+          order.orderId,
+          razorpayOrderId,
+          razorpayPaymentId || `pay_wh_${Date.now()}`
+        );
+        return { handled: true, message: `Order ${order.orderId} marked PAID via webhook` };
+      }
+      return { handled: true, message: `Order ${order.orderId} was already paid` };
+    }
+
+    if (event === 'payment.failed') {
+      logger.warn(`[RAZORPAY WEBHOOK] Payment failed for order ${order.orderId}: ${paymentEntity?.error_description}`);
+      return { handled: true, message: `Recorded payment failure for ${order.orderId}` };
+    }
+
+    return { handled: true, message: `Event ${event} acknowledged` };
   }
 }
 

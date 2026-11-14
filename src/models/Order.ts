@@ -61,8 +61,13 @@ export interface IOrder extends Document {
   // Online Gateway
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
+  razorpaySignature?: string;
   isPaid: boolean;
   paidAt?: Date;
+  refundStatus?: 'NONE' | 'INITIATED' | 'COMPLETED' | 'FAILED';
+  razorpayRefundId?: string;
+  refundAmount?: number;
+  refundedAt?: Date;
 
   // Offline Cash Collection Handshake
   cashCollectionOtp?: string;
@@ -223,11 +228,20 @@ export const OrderSchema = new Schema<IOrder>(
     paymentSelectionExpiresAt: Date,
     razorpayOrderId: String,
     razorpayPaymentId: String,
+    razorpaySignature: String,
     isPaid: {
       type: Boolean,
       default: false,
     },
     paidAt: Date,
+    refundStatus: {
+      type: String,
+      enum: ['NONE', 'INITIATED', 'COMPLETED', 'FAILED'],
+      default: 'NONE',
+    },
+    razorpayRefundId: String,
+    refundAmount: Number,
+    refundedAt: Date,
     cashCollectionOtp: String,
     cashCollectionOtpExpiresAt: Date,
     failedCashOtpAttempts: {
