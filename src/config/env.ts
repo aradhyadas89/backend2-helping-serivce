@@ -31,6 +31,7 @@ export const env = {
   ADMIN_SUB_BACKEND_SECRET: process.env.ADMIN_SUB_BACKEND_SECRET || 'helping-services-admin-sub-backend-secret-2026',
   ANALYSIS_ENGINE_SECRET: process.env.ANALYSIS_ENGINE_SECRET || 'helping-services-analysis-engine-secret-2026',
   JWT_SECRET: process.env.JWT_SECRET || 'helping-services-jwt-super-secret-key-2026',
+  GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyASKhpfg8Ax1V7iTN5ZXx9Lzc2E-lX4_uI',
 
   // Main Backend Interconnect
   MAIN_BACKEND_URL: process.env.MAIN_BACKEND_URL || 'http://localhost:8000',

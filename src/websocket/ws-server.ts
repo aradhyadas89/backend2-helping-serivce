@@ -5,6 +5,9 @@ import url from 'url';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { wsDispatcher, WSClientInfo } from './ws-dispatcher';
+import { getPartnerModel } from '../models/Partner';
+import { getOrderModel } from '../models/Order';
+import { googleMapsService } from '../services/google-maps.service';
 
 export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
@@ -19,13 +22,21 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
       return;
     }
 
-    // Optional auth check via query parameters
-    const token = (parsedUrl.query.token as string) || (parsedUrl.query.secret as string);
+    // Optional auth check via query parameters (accepts token, secret, apiKey, or key)
+    const token =
+      (parsedUrl.query.token as string) ||
+      (parsedUrl.query.secret as string) ||
+      (parsedUrl.query.key as string) ||
+      (parsedUrl.query.apiKey as string);
     let userId: string | undefined;
     let role: string | undefined;
 
     if (token) {
-      if (token === env.ADMIN_SUB_BACKEND_SECRET || token === env.ANALYSIS_ENGINE_SECRET) {
+      if (
+        token === env.ADMIN_SUB_BACKEND_SECRET ||
+        token === env.ANALYSIS_ENGINE_SECRET ||
+        token === env.GOOGLE_MAPS_API_KEY
+      ) {
         role = 'admin';
       } else {
         try {
@@ -71,7 +82,7 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
       clientInfo.isAlive = true;
     });
 
-    ws.on('message', (messageRaw: string) => {
+    ws.on('message', async (messageRaw: string) => {
       try {
         const msg = JSON.parse(messageRaw.toString());
 
@@ -93,6 +104,95 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
               activeChannels: Array.from(clientInfo.subscriptions),
             })
           );
+        } else if (msg.action === 'location_update' || msg.action === 'partner_location') {
+          // Real-time location stream over WebSocket
+          const { partnerId, orderId, latitude, longitude, speed, heading } = msg;
+
+          if (latitude !== undefined && longitude !== undefined) {
+            // 1. Update Partner location in DB
+            if (partnerId) {
+              const Partner = getPartnerModel();
+              await Partner.findOneAndUpdate(
+                { partnerId },
+                {
+                  $set: {
+                    latitude,
+                    longitude,
+                    currentLocation: {
+                      type: 'Point',
+                      coordinates: [longitude, latitude],
+                    },
+                    lastLocationUpdate: new Date(),
+                  },
+                }
+              );
+            }
+
+            // 2. If orderId provided, calculate route & ETA to customer destination
+            let remainingDistanceMeters: number | undefined;
+            let etaSeconds: number | undefined;
+            let routePolyline: string | undefined;
+
+            if (orderId) {
+              const Order = getOrderModel();
+              const order = await Order.findOne({ orderId }).lean();
+              if (order) {
+                const route = await googleMapsService.calculateRoute(
+                  { latitude, longitude },
+                  { latitude: order.latitude, longitude: order.longitude },
+                  (order.partnerTransportMode as any) || 'cycle'
+                );
+                remainingDistanceMeters = route.distanceMeters;
+                etaSeconds = route.durationSeconds;
+                routePolyline = route.polyline;
+
+                // Broadcast directly to order channel for customer live tracking
+                wsDispatcher.broadcast(`order:${orderId}`, {
+                  type: 'LIVE_LOCATION_UPDATE',
+                  orderId,
+                  partnerId: partnerId || order.assignedPartnerId,
+                  partnerLocation: {
+                    latitude,
+                    longitude,
+                    speed,
+                    heading,
+                  },
+                  remainingDistanceMeters,
+                  estimatedRemainingSeconds: etaSeconds,
+                  routePolyline,
+                  routeSource: route.source,
+                  timestamp: new Date().toISOString(),
+                });
+              }
+            }
+
+            // 3. Broadcast to fleet monitoring channel
+            wsDispatcher.broadcastLocation({
+              userId: partnerId || clientInfo.userId || 'anonymous_partner',
+              role: 'partner',
+              latitude,
+              longitude,
+              speed,
+              heading,
+              orderId,
+              remainingDistanceMeters,
+              etaSeconds,
+              lastPingAt: new Date(),
+            });
+
+            // 4. Send acknowledgment back to the partner
+            ws.send(
+              JSON.stringify({
+                type: 'location_ack',
+                status: 'received',
+                partnerId,
+                orderId,
+                remainingDistanceMeters,
+                etaSeconds,
+                timestamp: new Date().toISOString(),
+              })
+            );
+          }
         } else if (msg.action === 'ping') {
           ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
         }

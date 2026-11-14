@@ -8,6 +8,7 @@ import { partnerDispatchService } from './partner-dispatch.service';
 import { travelTimerService } from './travel-timer.service';
 import { wsDispatcher } from '../websocket/ws-dispatcher';
 import { emailService } from './email.service';
+import { googleMapsService } from './google-maps.service';
 import { calculateHaversineDistance } from '../utils/geo.utils';
 import { logger } from '../config/logger';
 import {
@@ -660,6 +661,8 @@ export class OrderService {
     mercyExtensionUsed: boolean;
     timerExpiresAt?: Date;
     isPartnerArrived: boolean;
+    routePolyline?: string;
+    routeSource?: string;
   }> {
     const Order = getOrderModel();
     const order = await Order.findOne({ orderId }).lean();
@@ -694,14 +697,15 @@ export class OrderService {
       }
     }
 
-    // Compute remaining distance using Haversine
-    const distanceMeters = Math.round(
-      calculateHaversineDistance(partnerLat, partnerLon, order.latitude, order.longitude)
+    // Compute route, distance, and dynamic duration via Google Maps (with Haversine fallback)
+    const route = await googleMapsService.calculateRoute(
+      { latitude: partnerLat, longitude: partnerLon },
+      { latitude: order.latitude, longitude: order.longitude },
+      transportMode as any
     );
 
-    // Calculate dynamic ETA based on speed
-    const speedMps = transportMode === 'walk' ? 1.25 : 4.167;
-    const dynamicTravelSeconds = Math.max(15, Math.round(distanceMeters / speedMps));
+    const distanceMeters = route.distanceMeters;
+    const dynamicTravelSeconds = route.durationSeconds;
 
     let travelStage: 'CASH_COLLECTION' | 'FINAL_DELIVERY' | 'PREPARATION' | 'COMPLETED' = 'PREPARATION';
     if (order.status === 'CASH_COLLECTION_IN_PROGRESS') {
@@ -736,6 +740,8 @@ export class OrderService {
       mercyExtensionUsed: !!(order.cashTripMercyUsed || order.deliveryTripMercyUsed),
       timerExpiresAt,
       isPartnerArrived: order.status === 'PARTNER_REACHED_DELIVERY' || !!order.cashCollectedAt,
+      routePolyline: route.polyline,
+      routeSource: route.source,
     };
   }
 
