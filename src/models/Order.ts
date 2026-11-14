@@ -7,6 +7,9 @@ export type OrderStatus =
   | 'PAID'
   | 'CASH_COLLECTION_IN_PROGRESS'
   | 'CASH_COLLECTED'
+  | 'BUYING_PAGES'
+  | 'WRITING_ASSIGNMENT'
+  | 'PRINTING_IN_PROGRESS'
   | 'PRODUCT_PICKED_UP'
   | 'DELIVERY_IN_PROGRESS'
   | 'PARTNER_REACHED_DELIVERY'
@@ -16,6 +19,55 @@ export type OrderStatus =
   | 'CANCELLED_BY_USER';
 
 export type PaymentMode = 'ONLINE' | 'OFFLINE';
+
+export type OrderType = 'STANDARD_PRODUCTS' | 'ASSIGNMENT_WRITING' | 'DOCUMENT_PRINTING';
+
+export interface IAssignmentDetails {
+  assignmentText: string;
+  explanation: string;
+  pageCount: number;
+  wordCount: number;
+  writingChargePerPage: number; // ₹1.00
+  pagePricePerPage: number; // ₹1.00
+  totalPageCharge: number; // pageCount * (writingChargePerPage + pagePricePerPage)
+  handwrittenTimeMinutes: number;
+  pageBuyingTimeMinutes: number;
+  deliveryTravelEtaMinutes: number;
+  totalEtaMinutes: number;
+  estimatedDeliveryAt?: Date;
+  nearestXeroxShop?: {
+    name: string;
+    latitude: number;
+    longitude: number;
+    distanceMeters: number;
+    address?: string;
+  };
+  currentStage?: 'BUYING_PAGES' | 'WRITING_ASSIGNMENT' | 'OUT_FOR_DELIVERY' | 'ARRIVED' | 'DELIVERED';
+  startedBuyingPagesAt?: Date;
+  startedWritingAt?: Date;
+  finishedWritingAt?: Date;
+}
+
+export interface IPrintingDetails {
+  fileId?: string;
+  fileName: string;
+  fileUrl: string;
+  googleDriveFileId?: string;
+  googleDriveViewLink?: string;
+  googleDriveDownloadLink?: string;
+  mimeType: string;
+  fileSizeBytes?: number;
+  pageCount: number;
+  copies: number;
+  colorMode: 'BW' | 'COLOR';
+  printSides?: 'SINGLE' | 'DOUBLE';
+  printRatePerPage: number; // e.g. ₹2 for BW, ₹10 for Color
+  totalPrintCharge: number;
+  explanation?: string;
+  currentStage?: 'PRINTING_IN_PROGRESS' | 'OUT_FOR_DELIVERY' | 'ARRIVED' | 'DELIVERED';
+  startedPrintingAt?: Date;
+  finishedPrintingAt?: Date;
+}
 
 export interface IOrderItem {
   productId: string;
@@ -27,6 +79,9 @@ export interface IOrderItem {
 
 export interface IOrder extends Document {
   orderId: string;
+  orderType: OrderType;
+  assignmentDetails?: IAssignmentDetails;
+  printingDetails?: IPrintingDetails;
   userId: string;
   userName: string;
   userEmail: string;
@@ -123,6 +178,69 @@ export const OrderSchema = new Schema<IOrder>(
       unique: true,
       index: true,
     },
+    orderType: {
+      type: String,
+      enum: ['STANDARD_PRODUCTS', 'ASSIGNMENT_WRITING', 'DOCUMENT_PRINTING'],
+      default: 'STANDARD_PRODUCTS',
+      index: true,
+    },
+    assignmentDetails: {
+      assignmentText: String,
+      explanation: String,
+      pageCount: Number,
+      wordCount: Number,
+      writingChargePerPage: Number,
+      pagePricePerPage: Number,
+      totalPageCharge: Number,
+      handwrittenTimeMinutes: Number,
+      pageBuyingTimeMinutes: Number,
+      deliveryTravelEtaMinutes: Number,
+      totalEtaMinutes: Number,
+      estimatedDeliveryAt: Date,
+      nearestXeroxShop: {
+        name: String,
+        latitude: Number,
+        longitude: Number,
+        distanceMeters: Number,
+        address: String,
+      },
+      currentStage: {
+        type: String,
+        enum: ['BUYING_PAGES', 'WRITING_ASSIGNMENT', 'OUT_FOR_DELIVERY', 'ARRIVED', 'DELIVERED'],
+      },
+      startedBuyingPagesAt: Date,
+      startedWritingAt: Date,
+      finishedWritingAt: Date,
+    },
+    printingDetails: {
+      fileId: String,
+      fileName: String,
+      fileUrl: String,
+      googleDriveFileId: String,
+      googleDriveViewLink: String,
+      googleDriveDownloadLink: String,
+      mimeType: String,
+      fileSizeBytes: Number,
+      pageCount: Number,
+      copies: Number,
+      colorMode: {
+        type: String,
+        enum: ['BW', 'COLOR'],
+      },
+      printSides: {
+        type: String,
+        enum: ['SINGLE', 'DOUBLE'],
+      },
+      printRatePerPage: Number,
+      totalPrintCharge: Number,
+      explanation: String,
+      currentStage: {
+        type: String,
+        enum: ['PRINTING_IN_PROGRESS', 'OUT_FOR_DELIVERY', 'ARRIVED', 'DELIVERED'],
+      },
+      startedPrintingAt: Date,
+      finishedPrintingAt: Date,
+    },
     userId: {
       type: String,
       required: true,
@@ -173,7 +291,7 @@ export const OrderSchema = new Schema<IOrder>(
     subtotal: {
       type: Number,
       required: true,
-      min: [30.0, 'Minimum order value is ₹30.00'],
+      min: [0.0, 'Subtotal cannot be negative'],
     },
     deliveryFee: {
       type: Number,
@@ -198,6 +316,9 @@ export const OrderSchema = new Schema<IOrder>(
         'PAID',
         'CASH_COLLECTION_IN_PROGRESS',
         'CASH_COLLECTED',
+        'BUYING_PAGES',
+        'WRITING_ASSIGNMENT',
+        'PRINTING_IN_PROGRESS',
         'PRODUCT_PICKED_UP',
         'DELIVERY_IN_PROGRESS',
         'PARTNER_REACHED_DELIVERY',

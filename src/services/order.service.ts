@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getOrderModel, IOrder, PaymentMode } from '../models/Order';
+import { getOrderModel, IOrder, PaymentMode, OrderType } from '../models/Order';
 import { getPartnerModel } from '../models/Partner';
 import { getPartnerWalletModel } from '../models/PartnerWallet';
 import { getUserOrderProfileModel } from '../models/UserOrderProfile';
@@ -10,6 +10,8 @@ import { wsDispatcher } from '../websocket/ws-dispatcher';
 import { emailService } from './email.service';
 import { googleMapsService } from './google-maps.service';
 import { razorpayService } from './razorpay.service';
+import { googleDriveService } from './google-drive.service';
+import { xeroxShopService } from './xerox-shop.service';
 import { calculateHaversineDistance } from '../utils/geo.utils';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
@@ -138,6 +140,16 @@ export class OrderService {
       throw new BadRequestException('1-minute payment selection window expired. Order has been cancelled.');
     }
 
+    // Assignment Writing and Document Printing require ONLINE payment mode only
+    if (
+      (order.orderType === 'ASSIGNMENT_WRITING' || order.orderType === 'DOCUMENT_PRINTING') &&
+      paymentMode === 'OFFLINE'
+    ) {
+      throw new BadRequestException(
+        `${order.orderType === 'ASSIGNMENT_WRITING' ? 'Assignment writing' : 'Document printing'} orders require ONLINE payment via Razorpay. Cash pickup is not permitted.`
+      );
+    }
+
     order.paymentMode = paymentMode;
 
     if (paymentMode === 'ONLINE') {
@@ -254,7 +266,22 @@ export class OrderService {
       order.razorpaySignature = razorpaySignature;
     }
     order.paidAt = new Date();
-    order.status = 'PAID';
+
+    if (order.orderType === 'ASSIGNMENT_WRITING') {
+      order.status = 'BUYING_PAGES';
+      if (order.assignmentDetails) {
+        order.assignmentDetails.currentStage = 'BUYING_PAGES';
+        order.assignmentDetails.startedBuyingPagesAt = new Date();
+      }
+    } else if (order.orderType === 'DOCUMENT_PRINTING') {
+      order.status = 'PRINTING_IN_PROGRESS';
+      if (order.printingDetails) {
+        order.printingDetails.currentStage = 'PRINTING_IN_PROGRESS';
+        order.printingDetails.startedPrintingAt = new Date();
+      }
+    } else {
+      order.status = 'PAID';
+    }
 
     // Calculate product pickup and delivery ETA
     const Partner = getPartnerModel();
@@ -529,13 +556,15 @@ export class OrderService {
       partner.offlineOrdersCompleted = (partner.offlineOrdersCompleted || 0) + 1;
     }
 
-    // Credit partner wallet virtual balance
-    await this.creditPartnerWallet(
-      partner.partnerId,
-      order.deliveryFee,
-      order.orderId,
-      `Delivery fee earning for ${order.paymentMode} delivery`
-    );
+    // Credit partner wallet virtual balance (if not already credited during online payment verification)
+    if (order.paymentMode !== 'ONLINE') {
+      await this.creditPartnerWallet(
+        partner.partnerId,
+        order.deliveryFee,
+        order.orderId,
+        `Delivery fee earning for ${order.paymentMode} delivery`
+      );
+    }
 
     // Update user profile completed orders
     await UserOrderProfile.findOneAndUpdate(
@@ -719,6 +748,9 @@ export class OrderService {
     isPartnerArrived: boolean;
     routePolyline?: string;
     routeSource?: string;
+    orderType?: OrderType;
+    assignmentDetails?: any;
+    printingDetails?: any;
   }> {
     const Order = getOrderModel();
     const order = await Order.findOne({ orderId }).lean();
@@ -798,6 +830,9 @@ export class OrderService {
       isPartnerArrived: order.status === 'PARTNER_REACHED_DELIVERY' || !!order.cashCollectedAt,
       routePolyline: route.polyline,
       routeSource: route.source,
+      orderType: order.orderType || 'STANDARD_PRODUCTS',
+      assignmentDetails: order.assignmentDetails,
+      printingDetails: order.printingDetails,
     };
   }
 
@@ -1104,6 +1139,580 @@ export class OrderService {
     }
 
     return { handled: true, message: `Event ${event} acknowledged` };
+  }
+
+  /**
+   * 19. Create Assignment Writing Order
+   * Calculates writing charge (₹1/page), page price (₹1/page), nearest xerox shop buying ETA, and handwriting ETA.
+   */
+  async createAssignmentOrder(input: {
+    userId?: string;
+    userName?: string;
+    userEmail?: string;
+    userPhone?: string;
+    latitude: number;
+    longitude: number;
+    deliveryAddress: string;
+    assignmentText: string;
+    explanation: string;
+    pageCount?: number;
+  }): Promise<IOrder> {
+    const userId = input.userId || 'guest_user';
+    const userEmail = input.userEmail || `${userId}@example.com`;
+    const userName = input.userName || 'Student';
+    const userPhone = input.userPhone || '9876543210';
+
+    // 1. Check partner crisis gate in 2.5km radius (>= 2 online partners)
+    const availability = await partnerDispatchService.checkPartnerAvailability(
+      input.latitude,
+      input.longitude
+    );
+
+    if (!availability.isAvailable) {
+      throw new AppError(
+        'Service temporarily unavailable due to partner crisis. At least 2 active delivery partners must be online in your zone. Please try again shortly.',
+        503
+      );
+    }
+
+    // 2. Algorithm: Calculate word count & page count (standard 250 words/page)
+    const words = input.assignmentText.trim().split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+    const computedPages =
+      input.pageCount && input.pageCount > 0
+        ? input.pageCount
+        : Math.max(1, Math.ceil(wordCount / 250));
+
+    // 3. Billing calculation:
+    // Written charge: ₹1 per page
+    // Page price: ₹1 per page
+    const writingChargePerPage = 1.0;
+    const pagePricePerPage = 1.0;
+    const totalPageCharge = Math.round(computedPages * (writingChargePerPage + pagePricePerPage) * 100) / 100;
+    const deliveryFee = 15.0;
+
+    // Check cancellation surcharge
+    const UserOrderProfile = getUserOrderProfileModel();
+    const userProfile = await UserOrderProfile.findOne({ userId });
+    let cancellationPenaltySurcharge = 0.0;
+    if (userProfile && userProfile.unpaidCancellationsCount >= 2) {
+      cancellationPenaltySurcharge = 0.3; // 30 paisa
+    }
+
+    const totalAmount = Math.round((totalPageCharge + deliveryFee + cancellationPenaltySurcharge) * 100) / 100;
+
+    // 4. Algorithm: Calculate handwritten time and page buying time from nearest xerox shop
+    const userLoc = { latitude: input.latitude, longitude: input.longitude };
+    const refPartnerLoc =
+      availability.candidatePartners[0]?.latitude && availability.candidatePartners[0]?.longitude
+        ? {
+            latitude: availability.candidatePartners[0].latitude,
+            longitude: availability.candidatePartners[0].longitude,
+          }
+        : userLoc;
+
+    const timings = await xeroxShopService.calculateAssignmentTimings(
+      refPartnerLoc,
+      userLoc,
+      computedPages,
+      wordCount,
+      'cycle'
+    );
+
+    const orderId = this.generateOrderId();
+    const Order = getOrderModel();
+
+    const order = await Order.create({
+      orderId,
+      orderType: 'ASSIGNMENT_WRITING',
+      userId,
+      userName,
+      userEmail,
+      userPhone,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      deliveryLocation: {
+        type: 'Point',
+        coordinates: [input.longitude, input.latitude],
+      },
+      deliveryAddress: input.deliveryAddress,
+      items: [
+        {
+          productId: 'SERVICE_ASSIGNMENT_WRITING',
+          title: `Assignment Handwritten Writing Service (${computedPages} Pages)`,
+          price: 2.0,
+          quantity: computedPages,
+          subtotal: totalPageCharge,
+        },
+      ],
+      subtotal: totalPageCharge,
+      deliveryFee,
+      cancellationPenaltySurcharge,
+      totalAmount,
+      status: 'SEARCHING_PARTNER',
+      notifiedPartnerIds: [],
+      ringBandsNotified: [],
+      isPaid: false,
+      isCashCollected: false,
+      assignmentDetails: {
+        assignmentText: input.assignmentText,
+        explanation: input.explanation,
+        pageCount: computedPages,
+        wordCount,
+        writingChargePerPage,
+        pagePricePerPage,
+        totalPageCharge,
+        handwrittenTimeMinutes: timings.handwrittenMinutes,
+        pageBuyingTimeMinutes: timings.pageBuyingMinutes,
+        deliveryTravelEtaMinutes: timings.deliveryTravelMinutes,
+        totalEtaMinutes: timings.totalEtaMinutes,
+        estimatedDeliveryAt: timings.estimatedDeliveryAt,
+        nearestXeroxShop: timings.nearestShop,
+        currentStage: 'BUYING_PAGES',
+      },
+    });
+
+    // 5. Ring partners within 2.5km concentric zone
+    await partnerDispatchService.dispatchOrderRings(order, availability.candidatePartners);
+
+    wsDispatcher.broadcast('orders:new', {
+      type: 'NEW_ASSIGNMENT_ORDER',
+      orderId: order.orderId,
+      pageCount: computedPages,
+      totalAmount,
+    });
+
+    logger.info(
+      `[ASSIGNMENT ORDER CREATED] ${order.orderId} - Pages: ${computedPages}, Amount: ₹${totalAmount}, Shop: ${timings.nearestShop.name}`
+    );
+
+    return order;
+  }
+
+  /**
+   * 20. Calculate Assignment Writing Billing Preview
+   */
+  async calculateAssignmentBilling(input: {
+    userId?: string;
+    assignmentText: string;
+    pageCount?: number;
+    approxDistanceMeters?: number;
+  }) {
+    const words = input.assignmentText.trim().split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+    const computedPages =
+      input.pageCount && input.pageCount > 0
+        ? input.pageCount
+        : Math.max(1, Math.ceil(wordCount / 250));
+
+    const writingCharge = computedPages * 1.0;
+    const pagePrice = computedPages * 1.0;
+    const subtotal = writingCharge + pagePrice;
+    const deliveryFee = 15.0;
+
+    const UserOrderProfile = getUserOrderProfileModel();
+    const userProfile = input.userId ? await UserOrderProfile.findOne({ userId: input.userId }) : null;
+    let cancellationPenaltySurcharge = 0.0;
+    if (userProfile && userProfile.unpaidCancellationsCount >= 2) {
+      cancellationPenaltySurcharge = 0.3;
+    }
+
+    const totalAmount = Math.round((subtotal + deliveryFee + cancellationPenaltySurcharge) * 100) / 100;
+    const timings = xeroxShopService.calculateHandwrittenTime(wordCount, computedPages);
+
+    return {
+      wordCount,
+      pageCount: computedPages,
+      writingChargePerPage: 1.0,
+      pagePricePerPage: 1.0,
+      writingCharge,
+      pagePrice,
+      subtotal,
+      deliveryFee,
+      cancellationPenaltySurcharge,
+      totalAmount,
+      handwrittenMinutes: timings.handwrittenMinutes,
+    };
+  }
+
+  /**
+   * 21. Update Assignment Writing Progress Stage
+   */
+  async updateAssignmentStage(
+    orderId: string,
+    partnerId: string,
+    stage: 'BUYING_PAGES' | 'WRITING_ASSIGNMENT' | 'OUT_FOR_DELIVERY'
+  ): Promise<IOrder> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    if (order.assignedPartnerId !== partnerId) {
+      throw new BadRequestException('Only the assigned partner can update assignment stage');
+    }
+
+    if (order.orderType !== 'ASSIGNMENT_WRITING' || !order.assignmentDetails) {
+      throw new BadRequestException('Order is not an assignment writing order');
+    }
+
+    order.assignmentDetails.currentStage = stage;
+    const now = new Date();
+
+    if (stage === 'BUYING_PAGES') {
+      order.status = 'BUYING_PAGES';
+      order.assignmentDetails.startedBuyingPagesAt = now;
+    } else if (stage === 'WRITING_ASSIGNMENT') {
+      order.status = 'WRITING_ASSIGNMENT';
+      order.assignmentDetails.startedWritingAt = now;
+    } else if (stage === 'OUT_FOR_DELIVERY') {
+      order.status = 'DELIVERY_IN_PROGRESS';
+      order.assignmentDetails.finishedWritingAt = now;
+    }
+
+    await order.save();
+
+    wsDispatcher.broadcast(`order:${order.orderId}`, {
+      type: 'ASSIGNMENT_STAGE_UPDATED',
+      orderId: order.orderId,
+      stage,
+      status: order.status,
+      message: `Assignment stage updated to ${stage}`,
+    });
+
+    return order;
+  }
+
+  /**
+   * 22. Create Document Printing Order
+   * Uploads image to Google Drive, dispatches ring within 2.5km radius.
+   */
+  async createPrintingOrder(
+    input: {
+      userId?: string;
+      userName?: string;
+      userEmail?: string;
+      userPhone?: string;
+      latitude: number;
+      longitude: number;
+      deliveryAddress: string;
+      pageCount: number;
+      copies?: number;
+      colorMode?: 'BW' | 'COLOR';
+      printSides?: 'SINGLE' | 'DOUBLE';
+      explanation?: string;
+      fileBase64?: string;
+      fileName?: string;
+      mimeType?: string;
+    },
+    uploadedFile?: Express.Multer.File
+  ): Promise<IOrder> {
+    const userId = input.userId || 'guest_user';
+    const userEmail = input.userEmail || `${userId}@example.com`;
+    const userName = input.userName || 'Customer';
+    const userPhone = input.userPhone || '9876543210';
+
+    // 1. Partner Crisis Gate Check
+    const availability = await partnerDispatchService.checkPartnerAvailability(
+      input.latitude,
+      input.longitude
+    );
+
+    if (!availability.isAvailable) {
+      throw new AppError(
+        'Service temporarily unavailable due to partner crisis. At least 2 active delivery partners must be online in your zone. Please try again shortly.',
+        503
+      );
+    }
+
+    // 2. Upload file to Google Drive (or local cloud storage fallback)
+    let fileBuffer: Buffer;
+    let fileName: string = input.fileName || 'document.jpg';
+    let mimeType: string = input.mimeType || 'image/jpeg';
+
+    if (uploadedFile) {
+      fileBuffer = uploadedFile.buffer;
+      fileName = uploadedFile.originalname;
+      mimeType = uploadedFile.mimetype;
+    } else if (input.fileBase64) {
+      const cleanBase64 = input.fileBase64.replace(/^data:image\/\w+;base64,/, '');
+      fileBuffer = Buffer.from(cleanBase64, 'base64');
+    } else {
+      fileBuffer = Buffer.from('MOCK_PRINT_IMAGE_PAYLOAD');
+    }
+
+    const driveDoc = await googleDriveService.uploadFile(fileBuffer, fileName, mimeType);
+
+    // 3. Billing calculation:
+    // Black & White (BW): ₹2.00 / page, Color: ₹10.00 / page
+    const pageCount = Number(input.pageCount) || 1;
+    const copies = Number(input.copies) || 1;
+    const colorMode = input.colorMode || 'BW';
+    const ratePerPage = colorMode === 'COLOR' ? 10.0 : 2.0;
+    const totalPrintCharge = Math.round(pageCount * copies * ratePerPage * 100) / 100;
+    const deliveryFee = 15.0;
+
+    const UserOrderProfile = getUserOrderProfileModel();
+    const userProfile = await UserOrderProfile.findOne({ userId });
+    let cancellationPenaltySurcharge = 0.0;
+    if (userProfile && userProfile.unpaidCancellationsCount >= 2) {
+      cancellationPenaltySurcharge = 0.3;
+    }
+
+    const totalAmount = Math.round((totalPrintCharge + deliveryFee + cancellationPenaltySurcharge) * 100) / 100;
+
+    const orderId = this.generateOrderId();
+    const Order = getOrderModel();
+
+    const order = await Order.create({
+      orderId,
+      orderType: 'DOCUMENT_PRINTING',
+      userId,
+      userName,
+      userEmail,
+      userPhone,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      deliveryLocation: {
+        type: 'Point',
+        coordinates: [input.longitude, input.latitude],
+      },
+      deliveryAddress: input.deliveryAddress,
+      items: [
+        {
+          productId: 'SERVICE_DOCUMENT_PRINTING',
+          title: `Document Printing (${pageCount} Pages, ${colorMode})`,
+          price: ratePerPage,
+          quantity: pageCount * copies,
+          subtotal: totalPrintCharge,
+        },
+      ],
+      subtotal: totalPrintCharge,
+      deliveryFee,
+      cancellationPenaltySurcharge,
+      totalAmount,
+      status: 'SEARCHING_PARTNER',
+      notifiedPartnerIds: [],
+      ringBandsNotified: [],
+      isPaid: false,
+      isCashCollected: false,
+      printingDetails: {
+        fileId: driveDoc.fileId,
+        fileName: driveDoc.fileName,
+        fileUrl: driveDoc.downloadUrl,
+        googleDriveFileId: driveDoc.googleDriveFileId,
+        googleDriveViewLink: driveDoc.googleDriveViewLink,
+        googleDriveDownloadLink: driveDoc.googleDriveDownloadLink,
+        mimeType: driveDoc.mimeType,
+        fileSizeBytes: driveDoc.sizeBytes,
+        pageCount,
+        copies,
+        colorMode,
+        printSides: input.printSides || 'SINGLE',
+        printRatePerPage: ratePerPage,
+        totalPrintCharge,
+        explanation: input.explanation,
+        currentStage: 'PRINTING_IN_PROGRESS',
+      },
+    });
+
+    // 4. Ring partners in 2.5km radius
+    await partnerDispatchService.dispatchOrderRings(order, availability.candidatePartners);
+
+    wsDispatcher.broadcast('orders:new', {
+      type: 'NEW_PRINTING_ORDER',
+      orderId: order.orderId,
+      pageCount,
+      copies,
+      colorMode,
+      totalAmount,
+    });
+
+    logger.info(
+      `[PRINTING ORDER CREATED] ${order.orderId} - File: ${driveDoc.fileName}, Drive: ${driveDoc.googleDriveFileId}, Total: ₹${totalAmount}`
+    );
+
+    return order;
+  }
+
+  /**
+   * 23. Calculate Printing Billing Preview
+   */
+  async calculatePrintingBilling(input: {
+    userId?: string;
+    pageCount: number;
+    copies?: number;
+    colorMode?: 'BW' | 'COLOR';
+    approxDistanceMeters?: number;
+  }) {
+    const pageCount = Number(input.pageCount) || 1;
+    const copies = Number(input.copies) || 1;
+    const colorMode = input.colorMode || 'BW';
+    const ratePerPage = colorMode === 'COLOR' ? 10.0 : 2.0;
+    const subtotal = Math.round(pageCount * copies * ratePerPage * 100) / 100;
+    const deliveryFee = 15.0;
+
+    const UserOrderProfile = getUserOrderProfileModel();
+    const userProfile = input.userId ? await UserOrderProfile.findOne({ userId: input.userId }) : null;
+    let cancellationPenaltySurcharge = 0.0;
+    if (userProfile && userProfile.unpaidCancellationsCount >= 2) {
+      cancellationPenaltySurcharge = 0.3;
+    }
+
+    const totalAmount = Math.round((subtotal + deliveryFee + cancellationPenaltySurcharge) * 100) / 100;
+
+    return {
+      pageCount,
+      copies,
+      colorMode,
+      ratePerPage,
+      subtotal,
+      deliveryFee,
+      cancellationPenaltySurcharge,
+      totalAmount,
+    };
+  }
+
+  /**
+   * 24. Update Document Printing Progress Stage
+   */
+  async updatePrintingStage(
+    orderId: string,
+    partnerId: string,
+    stage: 'PRINTING_IN_PROGRESS' | 'OUT_FOR_DELIVERY'
+  ): Promise<IOrder> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    if (order.assignedPartnerId !== partnerId) {
+      throw new BadRequestException('Only the assigned partner can update printing stage');
+    }
+
+    if (order.orderType !== 'DOCUMENT_PRINTING' || !order.printingDetails) {
+      throw new BadRequestException('Order is not a document printing order');
+    }
+
+    order.printingDetails.currentStage = stage;
+    const now = new Date();
+
+    if (stage === 'PRINTING_IN_PROGRESS') {
+      order.status = 'PRINTING_IN_PROGRESS';
+      order.printingDetails.startedPrintingAt = now;
+    } else if (stage === 'OUT_FOR_DELIVERY') {
+      order.status = 'DELIVERY_IN_PROGRESS';
+      order.printingDetails.finishedPrintingAt = now;
+    }
+
+    await order.save();
+
+    wsDispatcher.broadcast(`order:${order.orderId}`, {
+      type: 'PRINTING_STAGE_UPDATED',
+      orderId: order.orderId,
+      stage,
+      status: order.status,
+      message: `Printing stage updated to ${stage}`,
+    });
+
+    return order;
+  }
+
+  /**
+   * 25. Proximity Arrival Check & Phone Ringing Handshake
+   * When partner is near the user (< 150m), rings user phone, dispatches delivery OTP.
+   */
+  async triggerProximityRinging(
+    orderId: string,
+    partnerId: string,
+    partnerLat?: number,
+    partnerLon?: number
+  ): Promise<{
+    ringing: boolean;
+    distanceMeters: number;
+    message: string;
+    requiresOtp: boolean;
+  }> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    if (order.assignedPartnerId !== partnerId) {
+      throw new BadRequestException('Only the assigned partner can trigger arrival ringing');
+    }
+
+    let distanceMeters = 50;
+    if (partnerLat !== undefined && partnerLon !== undefined) {
+      distanceMeters = Math.round(
+        calculateHaversineDistance(partnerLat, partnerLon, order.latitude, order.longitude)
+      );
+    }
+
+    // Generate delivery OTP if not yet generated
+    if (!order.deliveryOtp) {
+      order.deliveryOtp = this.generate6DigitOtp();
+      order.deliveryOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    }
+
+    order.status = 'PARTNER_REACHED_DELIVERY';
+    if (order.assignmentDetails) {
+      order.assignmentDetails.currentStage = 'ARRIVED';
+    }
+    if (order.printingDetails) {
+      order.printingDetails.currentStage = 'ARRIVED';
+    }
+    await order.save();
+
+    // 1. Dispatch real email with delivery OTP to user
+    if (order.userEmail) {
+      await emailService.sendDeliveryOtpEmail({
+        email: order.userEmail,
+        userName: order.userName,
+        orderId: order.orderId,
+        otp: order.deliveryOtp,
+        partnerName: order.assignedPartnerName,
+      });
+    }
+
+    // 2. Dispatch real-time phone ring alert to user via WebSocket
+    wsDispatcher.broadcast(`user:order:${order.userId}`, {
+      type: 'USER_PHONE_RING_ALERT',
+      orderId: order.orderId,
+      partnerName: order.assignedPartnerName,
+      partnerPhone: order.assignedPartnerPhone,
+      proximityMeters: distanceMeters,
+      message: 'Your partner has arrived near your location! Your phone is ringing. Please share your delivery OTP with the partner.',
+      ringToneUrl: '/assets/audio/delivery_ring.mp3',
+      requiresOtp: true,
+    });
+
+    wsDispatcher.broadcast(`order:${order.orderId}`, {
+      type: 'USER_PHONE_RING_ALERT',
+      orderId: order.orderId,
+      partnerName: order.assignedPartnerName,
+      partnerPhone: order.assignedPartnerPhone,
+      proximityMeters: distanceMeters,
+      message: 'Partner arrived near location. Phone ringing alert dispatched.',
+      ringToneUrl: '/assets/audio/delivery_ring.mp3',
+    });
+
+    logger.info(
+      `[PROXIMITY RING] Partner ${partnerId} within ${distanceMeters}m of user for order ${order.orderId}. Phone ringing and delivery OTP sent.`
+    );
+
+    return {
+      ringing: true,
+      distanceMeters,
+      message: 'User phone is ringing. Delivery OTP has been dispatched to user.',
+      requiresOtp: true,
+    };
   }
 }
 

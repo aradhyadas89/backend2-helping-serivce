@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { validateBody, validateQuery } from '../middlewares/validate';
 import {
   createOrderSchema,
@@ -7,11 +8,19 @@ import {
   verifyRazorpayPaymentSchema,
   queryOrdersSchema,
   calculateBillSchema,
+  createAssignmentOrderSchema,
+  calculateAssignmentBillSchema,
+  updateAssignmentStageSchema,
+  createPrintingOrderSchema,
+  calculatePrintingBillSchema,
+  updatePrintingStageSchema,
+  proximityRingSchema,
 } from '../schemas/order.schema';
 import { rateOrderSchema } from '../schemas/partner.schema';
 import { orderService } from '../services/order.service';
 import { pricingService } from '../services/pricing.service';
 import { partnerDispatchService } from '../services/partner-dispatch.service';
+import { googleDriveService } from '../services/google-drive.service';
 import { getOrderModel } from '../models/Order';
 import { sendSuccess } from '../utils/response.utils';
 import { NotFoundException } from '../middlewares/errorHandler';
@@ -19,6 +28,11 @@ import { razorpayService } from '../services/razorpay.service';
 import { env } from '../config/env';
 
 const router = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB max document/image size
+});
 
 /**
  * @route   POST /api/v1/orders/webhook/razorpay
@@ -132,6 +146,132 @@ router.post(
     }
   }
 );
+
+/**
+ * @route   POST /api/v1/orders/assignment
+ * @desc    Book a partner for handwritten assignment writing (₹1 writing + ₹1 paper per page)
+ */
+router.post(
+  '/assignment',
+  validateBody(createAssignmentOrderSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user?.userId || req.body.userId || 'guest_user';
+      const order = await orderService.createAssignmentOrder({
+        ...req.body,
+        userId,
+      });
+
+      return sendSuccess(
+        res,
+        order,
+        'Assignment writing order created successfully! Ringing nearby partners in 2.5km zone.',
+        201
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/orders/calculate-assignment-bill
+ * @desc    Preview assignment bill (₹1 writing + ₹1 page price) and estimated handwriting time
+ */
+router.post(
+  '/calculate-assignment-bill',
+  validateBody(calculateAssignmentBillSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user?.userId || req.body.userId || 'guest_user';
+      const result = await orderService.calculateAssignmentBilling({
+        userId,
+        assignmentText: req.body.assignmentText,
+        pageCount: req.body.pageCount,
+        approxDistanceMeters: req.body.approxDistanceMeters,
+      });
+
+      return sendSuccess(res, result, 'Assignment writing bill calculated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/orders/printing
+ * @desc    Order document printing: upload image to Google Drive, ring partners in 2.5km zone
+ */
+router.post(
+  '/printing',
+  upload.single('file'),
+  validateBody(createPrintingOrderSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user?.userId || req.body.userId || 'guest_user';
+      const order = await orderService.createPrintingOrder(
+        {
+          ...req.body,
+          userId,
+        },
+        req.file
+      );
+
+      return sendSuccess(
+        res,
+        order,
+        'Printing order created and document stored in Google Drive. Ringing nearby partners in 2.5km zone.',
+        201
+      );
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/orders/calculate-printing-bill
+ * @desc    Preview document printing bill breakdown (BW ₹2/page, Color ₹10/page)
+ */
+router.post(
+  '/calculate-printing-bill',
+  validateBody(calculatePrintingBillSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user?.userId || req.body.userId || 'guest_user';
+      const result = await orderService.calculatePrintingBilling({
+        userId,
+        pageCount: req.body.pageCount,
+        copies: req.body.copies,
+        colorMode: req.body.colorMode,
+        approxDistanceMeters: req.body.approxDistanceMeters,
+      });
+
+      return sendSuccess(res, result, 'Printing bill calculated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   GET /api/v1/orders/print-document/:fileId
+ * @desc    Download stored document/image (proxy from Google Drive/local storage)
+ */
+router.get('/print-document/:fileId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const file = await googleDriveService.getFile(req.params.fileId);
+    if (!file) {
+      throw new NotFoundException(`Document ${req.params.fileId} not found in storage`);
+    }
+
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${file.fileName}"`);
+    return res.send(file.buffer);
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * @route   GET /api/v1/orders/user/:userId/active
@@ -433,6 +573,123 @@ router.post(
       );
 
       return sendSuccess(res, result, 'Thank you! Partner rated successfully.');
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   GET /api/v1/orders/:orderId/print-document
+ * @desc    Fetch and download print document for partner/user
+ */
+router.get('/:orderId/print-document', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId: req.params.orderId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${req.params.orderId} not found`);
+    }
+
+    if (order.orderType !== 'DOCUMENT_PRINTING' || !order.printingDetails) {
+      throw new NotFoundException('Order does not have a printable document');
+    }
+
+    const fileId = order.printingDetails.fileId;
+    if (!fileId) {
+      throw new NotFoundException('Document file ID is missing on this order');
+    }
+
+    const file = await googleDriveService.getFile(fileId);
+    if (!file) {
+      throw new NotFoundException(`File for order ${order.orderId} not found in Google Drive / storage`);
+    }
+
+    res.setHeader('Content-Type', file.mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${order.printingDetails.fileName}"`);
+    return res.send(file.buffer);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/orders/:orderId/assignment/stage
+ * @desc    Partner updates assignment writing stage (BUYING_PAGES -> WRITING_ASSIGNMENT -> OUT_FOR_DELIVERY)
+ */
+router.post(
+  '/:orderId/assignment/stage',
+  validateBody(updateAssignmentStageSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const partnerId = req.user?.userId || req.body.partnerId;
+      if (!partnerId) {
+        return res.status(400).json({ success: false, error: { code: 400, message: 'partnerId is required' } });
+      }
+
+      const order = await orderService.updateAssignmentStage(
+        req.params.orderId,
+        partnerId,
+        req.body.stage
+      );
+
+      return sendSuccess(res, order, `Assignment stage updated to ${req.body.stage}`);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/orders/:orderId/printing/stage
+ * @desc    Partner updates document printing stage (PRINTING_IN_PROGRESS -> OUT_FOR_DELIVERY)
+ */
+router.post(
+  '/:orderId/printing/stage',
+  validateBody(updatePrintingStageSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const partnerId = req.user?.userId || req.body.partnerId;
+      if (!partnerId) {
+        return res.status(400).json({ success: false, error: { code: 400, message: 'partnerId is required' } });
+      }
+
+      const order = await orderService.updatePrintingStage(
+        req.params.orderId,
+        partnerId,
+        req.body.stage
+      );
+
+      return sendSuccess(res, order, `Printing stage updated to ${req.body.stage}`);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/orders/:orderId/proximity-ring
+ * @desc    Partner near user (<150m): rings user phone and sends delivery OTP
+ */
+router.post(
+  '/:orderId/proximity-ring',
+  validateBody(proximityRingSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const partnerId = req.user?.userId || req.body.partnerId;
+      if (!partnerId) {
+        return res.status(400).json({ success: false, error: { code: 400, message: 'partnerId is required' } });
+      }
+
+      const result = await orderService.triggerProximityRinging(
+        req.params.orderId,
+        partnerId,
+        req.body.partnerLatitude,
+        req.body.partnerLongitude
+      );
+
+      return sendSuccess(res, result, result.message);
     } catch (error) {
       next(error);
     }
