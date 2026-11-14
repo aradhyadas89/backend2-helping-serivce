@@ -7,6 +7,7 @@ import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { correlationMiddleware } from './middlewares/correlation';
 import { errorHandler, NotFoundException } from './middlewares/errorHandler';
+import { noSqlSanitizer } from './middlewares/sanitize.middleware';
 import { getDatabaseHealth } from './config/database';
 import { wsDispatcher } from './websocket/ws-dispatcher';
 import apiRouter from './routes';
@@ -20,13 +21,30 @@ export function createApp(): Application {
   // Correlation ID tracking
   app.use(correlationMiddleware);
 
-  // Security Headers
+  // Security Headers & Anti-Clickjacking
   app.use(
     helmet({
       contentSecurityPolicy: false, // Allows flexible dashboard integrations
       crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
+      noSniff: true,
+      frameguard: { action: 'deny' },
+      hidePoweredBy: true,
     })
   );
+
+  // Defense-in-Depth HTTP Response Headers
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()');
+    next();
+  });
 
   // CORS Configuration
   app.use(
@@ -64,6 +82,9 @@ export function createApp(): Application {
   // JSON Body Parser with 10mb limit for telemetry batch payloads
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+  // Global Zero-Trust NoSQL Operator Sanitizer
+  app.use(noSqlSanitizer);
 
   // HTTP Request Logging
   if (env.ENVIRONMENT !== 'test') {

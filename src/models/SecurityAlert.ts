@@ -7,7 +7,12 @@ export type AlertType =
   | 'speed_violation'
   | 'geofence_breach'
   | 'critical_low_battery'
-  | 'mocked_location_spoofing';
+  | 'mocked_location_spoofing'
+  | 'brute_force_detected'
+  | 'unauthorized_access_attempt'
+  | 'nosql_injection_attempt'
+  | 'token_revoked_or_blocked'
+  | 'suspicious_withdrawal_attempt';
 
 export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type AlertStatus = 'open' | 'acknowledged' | 'resolved' | 'dismissed';
@@ -52,6 +57,11 @@ export const SecurityAlertSchema = new Schema<ISecurityAlert>(
         'geofence_breach',
         'critical_low_battery',
         'mocked_location_spoofing',
+        'brute_force_detected',
+        'unauthorized_access_attempt',
+        'nosql_injection_attempt',
+        'token_revoked_or_blocked',
+        'suspicious_withdrawal_attempt',
       ],
       required: true,
       index: true,

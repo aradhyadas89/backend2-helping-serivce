@@ -4,6 +4,8 @@ import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { UnauthorizedException, ForbiddenException } from './errorHandler';
 import { AuthUser, UserRole } from '../types';
+import { getPartnerModel } from '../models/Partner';
+import { getCacheClient } from '../config/redis';
 
 /**
  * Constant-time comparison using pre-hashed SHA-256 buffers to eliminate timing attacks
@@ -45,7 +47,7 @@ export function verifyInternalSecret(req: Request, _res: Response, next: NextFun
 /**
  * Authenticates JWT bearer token for Admin Panel / Operator requests
  */
-export function authenticate(req: Request, _res: Response, next: NextFunction): void {
+export async function authenticate(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -56,10 +58,37 @@ export function authenticate(req: Request, _res: Response, next: NextFunction): 
 
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET) as any;
+    const userId = decoded.userId || decoded.id || decoded.sub;
+    const role = decoded.role || 'user';
+
+    // Zero-Trust Active Account Verification: Ensure suspended / blocked partners are halted
+    if (role === 'partner' && userId) {
+      try {
+        const Partner = getPartnerModel();
+        const partner = await Partner.findOne({ partnerId: userId }).select('isBlocked').lean();
+        if (partner?.isBlocked) {
+          return next(new UnauthorizedException('Account has been suspended. Access denied.'));
+        }
+      } catch {
+        // Fallback gracefully if database lookup errors
+      }
+    }
+
+    // Check Redis Token Revocation / Blacklist
+    try {
+      const cache = getCacheClient();
+      const isRevoked = await cache.get(`token:revoked:${token}`);
+      if (isRevoked) {
+        return next(new UnauthorizedException('Authentication token has been revoked.'));
+      }
+    } catch {
+      // In-memory or cache fallback
+    }
+
     req.user = {
-      userId: decoded.userId || decoded.id || decoded.sub,
+      userId,
       email: decoded.email,
-      role: decoded.role || 'user',
+      role,
       name: decoded.name,
     };
     next();
