@@ -504,12 +504,12 @@ export class OrderService {
   async handlePaymentTimeout(order: IOrder): Promise<void> {
     order.status = 'CANCELLED_PAYMENT_TIMEOUT';
 
-    // Release assigned partner
+    // Release assigned partner and restore online availability
     if (order.assignedPartnerId) {
       const Partner = getPartnerModel();
       await Partner.findOneAndUpdate(
         { partnerId: order.assignedPartnerId },
-        { $set: { activeOrderId: null } }
+        { $set: { activeOrderId: null, isOnline: true } }
       );
     }
 
@@ -574,6 +574,249 @@ export class OrderService {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+  }
+
+  private paymentSweeperTimer: NodeJS.Timeout | null = null;
+
+  /**
+   * 10. Sweep Expired Payment Windows (Cancels PAYMENT_PENDING orders older than 60s)
+   */
+  async sweepExpiredPaymentWindows(): Promise<number> {
+    const Order = getOrderModel();
+    const expiredOrders = await Order.find({
+      status: 'PAYMENT_PENDING',
+      $or: [{ paymentMode: null }, { paymentMode: { $exists: false } }],
+      paymentSelectionExpiresAt: { $lte: new Date() },
+    });
+
+    let sweptCount = 0;
+    for (const order of expiredOrders) {
+      try {
+        await this.handlePaymentTimeout(order);
+        sweptCount++;
+        logger.info(`[PAYMENT SWEEPER] Auto-cancelled expired order ${order.orderId}`);
+      } catch (err) {
+        logger.error(`[PAYMENT SWEEPER] Failed to cancel order ${order.orderId}:`, err);
+      }
+    }
+    return sweptCount;
+  }
+
+  /**
+   * Start background payment timeout sweeper (e.g. every 10 seconds)
+   */
+  startPaymentTimeoutSweeper(intervalMs: number = 10000): void {
+    if (this.paymentSweeperTimer) {
+      return;
+    }
+    logger.info(`[PAYMENT SWEEPER] Background sweeper started (interval: ${intervalMs}ms)`);
+    this.paymentSweeperTimer = setInterval(async () => {
+      try {
+        await this.sweepExpiredPaymentWindows();
+      } catch (error) {
+        logger.error('[PAYMENT SWEEPER] Periodic sweep error:', error);
+      }
+    }, intervalMs);
+    this.paymentSweeperTimer.unref();
+  }
+
+  /**
+   * Stop background payment timeout sweeper
+   */
+  stopPaymentTimeoutSweeper(): void {
+    if (this.paymentSweeperTimer) {
+      clearInterval(this.paymentSweeperTimer);
+      this.paymentSweeperTimer = null;
+      logger.info('[PAYMENT SWEEPER] Background sweeper stopped');
+    }
+  }
+
+  /**
+   * 11. Get Live Tracking Details for Order (Partner real-time GPS, ETA, and stage)
+   */
+  async getLiveTracking(orderId: string): Promise<{
+    orderId: string;
+    status: string;
+    paymentMode?: string | null;
+    totalAmount: number;
+    deliveryAddress: string;
+    deliveryLocation: {
+      latitude: number;
+      longitude: number;
+    };
+    partner: {
+      partnerId: string;
+      name: string;
+      phone: string;
+      transportMode: string;
+      rating: number;
+      latitude: number;
+      longitude: number;
+      lastLocationUpdate?: Date;
+    } | null;
+    remainingDistanceMeters: number;
+    estimatedRemainingSeconds: number;
+    travelStage: 'CASH_COLLECTION' | 'FINAL_DELIVERY' | 'PREPARATION' | 'COMPLETED';
+    mercyExtensionUsed: boolean;
+    timerExpiresAt?: Date;
+    isPartnerArrived: boolean;
+  }> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId }).lean();
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    let partnerData = null;
+    let partnerLat = order.latitude;
+    let partnerLon = order.longitude;
+    let transportMode = order.partnerTransportMode || 'cycle';
+
+    if (order.assignedPartnerId) {
+      const Partner = getPartnerModel();
+      const partner = await Partner.findOne({ partnerId: order.assignedPartnerId }).lean();
+      if (partner) {
+        transportMode = partner.transportMode || transportMode;
+        partnerLat = partner.latitude ?? partner.currentLocation?.coordinates?.[1] ?? order.latitude;
+        partnerLon = partner.longitude ?? partner.currentLocation?.coordinates?.[0] ?? order.longitude;
+
+        partnerData = {
+          partnerId: partner.partnerId,
+          name: partner.name,
+          phone: partner.phone,
+          transportMode: partner.transportMode,
+          rating: partner.rating,
+          latitude: partnerLat,
+          longitude: partnerLon,
+          lastLocationUpdate: partner.lastLocationUpdate,
+        };
+      }
+    }
+
+    // Compute remaining distance using Haversine
+    const distanceMeters = Math.round(
+      calculateHaversineDistance(partnerLat, partnerLon, order.latitude, order.longitude)
+    );
+
+    // Calculate dynamic ETA based on speed
+    const speedMps = transportMode === 'walk' ? 1.25 : 4.167;
+    const dynamicTravelSeconds = Math.max(15, Math.round(distanceMeters / speedMps));
+
+    let travelStage: 'CASH_COLLECTION' | 'FINAL_DELIVERY' | 'PREPARATION' | 'COMPLETED' = 'PREPARATION';
+    if (order.status === 'CASH_COLLECTION_IN_PROGRESS') {
+      travelStage = 'CASH_COLLECTION';
+    } else if (order.status === 'DELIVERY_IN_PROGRESS' || order.status === 'PARTNER_REACHED_DELIVERY') {
+      travelStage = 'FINAL_DELIVERY';
+    } else if (order.status === 'DELIVERED') {
+      travelStage = 'COMPLETED';
+    }
+
+    const timerExpiresAt =
+      order.status === 'CASH_COLLECTION_IN_PROGRESS'
+        ? order.cashTripExpiresAt
+        : order.status === 'DELIVERY_IN_PROGRESS'
+        ? order.deliveryTripExpiresAt
+        : undefined;
+
+    return {
+      orderId: order.orderId,
+      status: order.status,
+      paymentMode: order.paymentMode,
+      totalAmount: order.totalAmount,
+      deliveryAddress: order.deliveryAddress,
+      deliveryLocation: {
+        latitude: order.latitude,
+        longitude: order.longitude,
+      },
+      partner: partnerData,
+      remainingDistanceMeters: distanceMeters,
+      estimatedRemainingSeconds: dynamicTravelSeconds,
+      travelStage,
+      mercyExtensionUsed: !!(order.cashTripMercyUsed || order.deliveryTripMercyUsed),
+      timerExpiresAt,
+      isPartnerArrived: order.status === 'PARTNER_REACHED_DELIVERY' || !!order.cashCollectedAt,
+    };
+  }
+
+  /**
+   * 12. Rate Partner Order (Customer submits 1-5 star review and feedback)
+   */
+  async ratePartnerOrder(
+    orderId: string,
+    userId: string | undefined,
+    rating: number,
+    feedback?: string
+  ): Promise<{
+    orderId: string;
+    rating: number;
+    feedback?: string;
+    partnerRating: number;
+    partnerRatingCount: number;
+    partnerReputationScore: number;
+  }> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found`);
+    }
+
+    if (userId && order.userId && order.userId !== userId) {
+      throw new BadRequestException('You are not authorized to rate this order');
+    }
+
+    if (order.status !== 'DELIVERED') {
+      throw new BadRequestException(`Order cannot be rated until it is delivered. Current status: ${order.status}`);
+    }
+
+    if (order.isRated) {
+      throw new ConflictException('This order has already been rated');
+    }
+
+    order.isRated = true;
+    order.rating = rating;
+    order.ratingFeedback = feedback;
+    order.ratedAt = new Date();
+    await order.save();
+
+    let partnerRating = 5.0;
+    let partnerRatingCount = 0;
+    let partnerReputation = 100;
+
+    if (order.assignedPartnerId) {
+      const Partner = getPartnerModel();
+      const partner = await Partner.findOne({ partnerId: order.assignedPartnerId });
+      if (partner) {
+        const currentCount = partner.ratingCount || 0;
+        const currentAvg = partner.rating || 5.0;
+        const newCount = currentCount + 1;
+        const newAvg = Math.round(((currentAvg * currentCount + rating) / newCount) * 10) / 10;
+
+        partner.rating = Math.max(1.0, Math.min(5.0, newAvg));
+        partner.ratingCount = newCount;
+
+        if (rating >= 4) {
+          partner.reputationScore = Math.min(100, (partner.reputationScore || 100) + 1);
+        } else if (rating <= 2) {
+          partner.reputationScore = Math.max(0, (partner.reputationScore || 100) - 3);
+        }
+
+        await partner.save();
+        partnerRating = partner.rating;
+        partnerRatingCount = partner.ratingCount;
+        partnerReputation = partner.reputationScore;
+      }
+    }
+
+    return {
+      orderId: order.orderId,
+      rating,
+      feedback,
+      partnerRating,
+      partnerRatingCount,
+      partnerReputationScore: partnerReputation,
+    };
   }
 }
 

@@ -42,6 +42,21 @@ export const verifyRazorpayPaymentSchema = z.object({
 
 export type VerifyRazorpayPaymentInput = z.infer<typeof verifyRazorpayPaymentSchema>;
 
+export const calculateBillSchema = z.object({
+  userId: z.string().optional(),
+  items: z
+    .array(
+      z.object({
+        productId: z.string().min(1, 'Product ID is required'),
+        quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+      })
+    )
+    .min(1, 'At least one item is required'),
+  approxDistanceMeters: z.number().min(0).optional().default(1000),
+});
+
+export type CalculateBillInput = z.infer<typeof calculateBillSchema>;
+
 export const queryOrdersSchema = z.object({
   status: z.string().optional(),
   userId: z.string().optional(),

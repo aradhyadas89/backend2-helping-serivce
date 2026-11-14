@@ -6,8 +6,11 @@ import {
   verifyOtpSchema,
   verifyRazorpayPaymentSchema,
   queryOrdersSchema,
+  calculateBillSchema,
 } from '../schemas/order.schema';
+import { rateOrderSchema } from '../schemas/partner.schema';
 import { orderService } from '../services/order.service';
+import { pricingService } from '../services/pricing.service';
 import { getOrderModel } from '../models/Order';
 import { sendSuccess } from '../utils/response.utils';
 import { NotFoundException } from '../middlewares/errorHandler';
@@ -77,6 +80,29 @@ router.get(
 );
 
 /**
+ * @route   POST /api/v1/orders/calculate-bill
+ * @desc    Preview bill breakdown, delivery fee, threshold requirement, and penalty surcharge
+ */
+router.post(
+  '/calculate-bill',
+  validateBody(calculateBillSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user?.userId || req.body.userId || 'guest_user';
+      const result = await pricingService.estimateBilling(
+        userId,
+        req.body.items,
+        req.body.approxDistanceMeters || 1000
+      );
+
+      return sendSuccess(res, result, 'Bill breakdown calculated successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
  * @route   GET /api/v1/orders/:orderId
  * @desc    Get order details, current status, and billing breakdown
  */
@@ -115,10 +141,11 @@ router.post('/:orderId/partner-accept', async (req: Request, res: Response, next
 
 /**
  * @route   POST /api/v1/orders/:orderId/select-payment
+ * @route   POST /api/v1/orders/:orderId/payment-mode
  * @desc    User selects payment mode (ONLINE or OFFLINE) within 1-minute window
  */
 router.post(
-  '/:orderId/select-payment',
+  ['/:orderId/select-payment', '/:orderId/payment-mode'],
   validateBody(selectPaymentModeSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -261,6 +288,45 @@ router.post('/:orderId/request-mercy-extension', async (req: Request, res: Respo
     next(error);
   }
 });
+
+/**
+ * @route   GET /api/v1/orders/:orderId/live-track
+ * @desc    Get real-time tracking for customer/partner with dynamic ETA and stage
+ */
+router.get('/:orderId/live-track', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const liveTracking = await orderService.getLiveTracking(req.params.orderId);
+    return sendSuccess(res, liveTracking, 'Live order tracking retrieved successfully');
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/orders/:orderId/rate
+ * @desc    Customer rates partner (1-5 stars + feedback) after delivery
+ */
+router.post(
+  '/:orderId/rate',
+  validateBody(rateOrderSchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const userId = req.user?.userId || req.body.userId;
+      const { rating, feedback } = req.body;
+
+      const result = await orderService.ratePartnerOrder(
+        req.params.orderId,
+        userId,
+        rating,
+        feedback
+      );
+
+      return sendSuccess(res, result, 'Thank you! Partner rated successfully.');
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 export default router;
 

@@ -5,10 +5,18 @@ export const registerPartnerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   email: z.string().email('Invalid email address'),
   phone: z.string().min(10, 'Phone must be at least 10 digits'),
+  password: z.string().min(6, 'Password must be at least 6 characters').optional().default('Partner@123'),
   transportMode: z.enum(['cycle', 'walk']).default('cycle'),
 });
 
 export type RegisterPartnerInput = z.infer<typeof registerPartnerSchema>;
+
+export const loginPartnerSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+export type LoginPartnerInput = z.infer<typeof loginPartnerSchema>;
 
 export const togglePartnerOnlineSchema = z.object({
   isOnline: z.boolean(),
@@ -31,3 +39,9 @@ export const partnerMarkReachedSchema = z.object({
   longitude: z.number().min(-180).max(180).optional(),
 });
 
+export const rateOrderSchema = z.object({
+  rating: z.number().min(1).max(5),
+  feedback: z.string().max(500).optional(),
+});
+
+export type RateOrderInput = z.infer<typeof rateOrderSchema>;

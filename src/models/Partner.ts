@@ -8,6 +8,7 @@ export interface IPartner extends Document {
   name: string;
   email: string;
   phone: string;
+  passwordHash?: string;
   isOnline: boolean;
   transportMode: TransportMode;
   currentLocation?: {
@@ -25,6 +26,9 @@ export interface IPartner extends Document {
   onlineOrdersCompleted: number; // 5:1 ratio tracker
   offlineOrdersCompleted: number; // 5:1 ratio tracker
   activeOrderId?: string | null;
+  activeHoursTotal: number;
+  lastLoginAt?: Date;
+  cancelledOrdersCount: number;
   isBlocked: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -56,6 +60,10 @@ export const PartnerSchema = new Schema<IPartner>(
       required: true,
       trim: true,
     },
+    passwordHash: {
+      type: String,
+      select: false,
+    },
     isOnline: {
       type: Boolean,
       default: false,
@@ -67,10 +75,10 @@ export const PartnerSchema = new Schema<IPartner>(
       default: 'cycle',
     },
     currentLocation: {
+      _id: false,
       type: {
         type: String,
         enum: ['Point'],
-        default: 'Point',
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
@@ -115,6 +123,17 @@ export const PartnerSchema = new Schema<IPartner>(
       type: String,
       default: null,
     },
+    activeHoursTotal: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastLoginAt: Date,
+    cancelledOrdersCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     isBlocked: {
       type: Boolean,
       default: false,
@@ -127,13 +146,14 @@ export const PartnerSchema = new Schema<IPartner>(
         ret.id = ret._id;
         delete ret._id;
         delete ret.__v;
+        delete ret.passwordHash;
         return ret;
       },
     },
   }
 );
 
-PartnerSchema.index({ currentLocation: '2dsphere' });
+PartnerSchema.index({ currentLocation: '2dsphere' }, { sparse: true });
 PartnerSchema.index({ isOnline: 1, isBlocked: 1 });
 
 export const getPartnerModel = (): Model<IPartner> => {

@@ -6,6 +6,7 @@ import { connectDB, closeDB, ensureIndexes } from './config/database';
 import { getCacheClient } from './config/redis';
 import { setupWebSocketServer } from './websocket/ws-server';
 import { userAnalysisService } from './services/user-analysis.service';
+import { orderService } from './services/order.service';
 
 async function bootstrap() {
   try {
@@ -31,8 +32,9 @@ async function bootstrap() {
     // 5. Initialize WebSocket Server for live map streaming and security alerts
     const wss = setupWebSocketServer(server);
 
-    // 6. Start Background Intelligence Worker
+    // 6. Start Background Intelligence Worker & Payment Sweeper
     userAnalysisService.startAutoWorker();
+    orderService.startPaymentTimeoutSweeper();
 
     // 7. Start Listening
     server.listen(env.PORT, env.HOST, () => {
@@ -55,8 +57,9 @@ async function bootstrap() {
         logger.info('WebSocket server closed');
       });
 
-      // Stop background analysis timers
+      // Stop background analysis timers and payment sweeper
       userAnalysisService.stopAutoWorker();
+      orderService.stopPaymentTimeoutSweeper();
 
       // Close DB connection pools
       await closeDB();

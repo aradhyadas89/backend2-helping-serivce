@@ -87,6 +87,12 @@ export interface IOrder extends Document {
   notifiedPartnerIds: string[];
   ringBandsNotified: number[];
 
+  // Customer Rating & Feedback
+  isRated?: boolean;
+  rating?: number;
+  ratingFeedback?: string;
+  ratedAt?: Date;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -258,6 +264,17 @@ export const OrderSchema = new Schema<IOrder>(
       type: [Number],
       default: [],
     },
+    isRated: {
+      type: Boolean,
+      default: false,
+    },
+    rating: {
+      type: Number,
+      min: 1.0,
+      max: 5.0,
+    },
+    ratingFeedback: String,
+    ratedAt: Date,
   },
   {
     timestamps: true,

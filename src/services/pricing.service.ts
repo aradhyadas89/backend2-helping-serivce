@@ -108,6 +108,86 @@ export class PricingService {
       penaltyApplied,
     };
   }
+
+  /**
+   * Preview bill calculation without throwing error if below ₹30 (for checkout UI)
+   */
+  async estimateBilling(
+    userId: string,
+    rawItems: Array<{ productId: string; quantity: number }>,
+    distanceMeters: number = 1000
+  ): Promise<{
+    items: Array<{ productId: string; title: string; price: number; quantity: number; subtotal: number }>;
+    subtotal: number;
+    deliveryFee: number;
+    cancellationPenaltySurcharge: number;
+    totalAmount: number;
+    canOrder: boolean;
+    minimumOrderRequirement: number;
+    amountShort: number;
+    penaltyApplied: boolean;
+  }> {
+    const Product = getProductModel();
+    const productIds = rawItems.map((i) => i.productId);
+
+    const products = await Product.find({ _id: { $in: productIds }, isActive: true, isDeleted: false });
+    const productMap = new Map(products.map((p) => [p._id.toString(), p]));
+
+    let subtotal = 0.0;
+    const items = rawItems
+      .filter((raw) => productMap.has(raw.productId))
+      .map((raw) => {
+        const product = productMap.get(raw.productId)!;
+        const unitPrice =
+          product.discountPrice !== undefined && product.discountPrice > 0
+            ? product.discountPrice
+            : product.price;
+
+        const itemSubtotal = Math.round(unitPrice * raw.quantity * 100) / 100;
+        subtotal += itemSubtotal;
+
+        return {
+          productId: product._id.toString(),
+          title: product.title,
+          price: unitPrice,
+          quantity: raw.quantity,
+          subtotal: itemSubtotal,
+        };
+      });
+
+    subtotal = Math.round(subtotal * 100) / 100;
+    const canOrder = subtotal >= this.MIN_ORDER_AMOUNT;
+    const amountShort = canOrder ? 0 : Math.round((this.MIN_ORDER_AMOUNT - subtotal) * 100) / 100;
+
+    let deliveryFee = 15.0;
+    if (distanceMeters > 1500) {
+      deliveryFee += Math.round(((distanceMeters - 1500) / 500) * 5 * 100) / 100;
+    }
+
+    const UserOrderProfile = getUserOrderProfileModel();
+    const userProfile = await UserOrderProfile.findOne({ userId });
+
+    let cancellationPenaltySurcharge = 0.0;
+    let penaltyApplied = false;
+    if ((userProfile?.unpaidCancellationsCount || 0) >= 2) {
+      cancellationPenaltySurcharge = this.CANCELLATION_SURCHARGE_RUPEES;
+      penaltyApplied = true;
+    }
+
+    const totalAmount = Math.round((subtotal + deliveryFee + cancellationPenaltySurcharge) * 100) / 100;
+
+    return {
+      items,
+      subtotal,
+      deliveryFee,
+      cancellationPenaltySurcharge,
+      totalAmount,
+      canOrder,
+      minimumOrderRequirement: this.MIN_ORDER_AMOUNT,
+      amountShort,
+      penaltyApplied,
+    };
+  }
 }
 
 export const pricingService = new PricingService();

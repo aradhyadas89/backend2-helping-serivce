@@ -44,6 +44,20 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 });
 
 /**
+ * @route   GET /api/v1/products/categories/all
+ * @desc    Get all distinct active product categories
+ */
+router.get('/categories/all', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const Product = getProductModel();
+    const categories = await Product.distinct('category', { isActive: true, isDeleted: false });
+    return sendSuccess(res, categories, 'Categories retrieved successfully');
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   GET /api/v1/products/:productId
  * @desc    Get product details, pricing, discount, and stock
  */
@@ -106,6 +120,29 @@ router.patch('/:productId', async (req: Request, res: Response, next: NextFuncti
     }
 
     return sendSuccess(res, updated, 'Product updated successfully');
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/v1/products/:productId
+ * @desc    Admin soft delete product from catalog
+ */
+router.delete('/:productId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const Product = getProductModel();
+    const product = await Product.findByIdAndUpdate(
+      req.params.productId,
+      { $set: { isDeleted: true, isActive: false } },
+      { new: true }
+    );
+
+    if (!product) {
+      throw new NotFoundException(`Product ${req.params.productId} not found`);
+    }
+
+    return sendSuccess(res, { productId: req.params.productId, isDeleted: true }, 'Product deleted successfully');
   } catch (error) {
     next(error);
   }
