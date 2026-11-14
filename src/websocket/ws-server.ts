@@ -35,7 +35,8 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
       if (
         token === env.ADMIN_SUB_BACKEND_SECRET ||
         token === env.ANALYSIS_ENGINE_SECRET ||
-        token === env.GOOGLE_MAPS_API_KEY
+        token === env.GOOGLE_MAPS_API_KEY ||
+        token === env.MAPPLS_API_KEY
       ) {
         role = 'admin';
       } else {

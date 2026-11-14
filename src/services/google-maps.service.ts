@@ -8,32 +8,59 @@ export interface RouteComputationResult {
   distanceMeters: number;
   durationSeconds: number;
   polyline?: string;
-  source: 'google_maps_api' | 'haversine_fallback';
+  source: 'mappls_api' | 'google_maps_api' | 'haversine_fallback';
 }
 
 export class GoogleMapsService {
-  private apiKey: string;
+  private googleApiKey: string;
+  private mapplsApiKey: string;
 
   constructor() {
-    this.apiKey = env.GOOGLE_MAPS_API_KEY || '';
+    this.googleApiKey = env.GOOGLE_MAPS_API_KEY || '';
+    this.mapplsApiKey = env.MAPPLS_API_KEY || '';
   }
 
   /**
    * Calculate distance and ETA between origin and destination.
-   * Uses Google Routes / Distance Matrix API with automatic fallback to Haversine speed mechanics.
+   * Cascade: Mappls (MapmyIndia) -> Google Routes API -> High-precision Haversine fallback.
    */
   async calculateRoute(
     origin: { latitude: number; longitude: number },
     destination: { latitude: number; longitude: number },
     mode: TransportMode = 'cycle'
   ): Promise<RouteComputationResult> {
+    // 1. Attempt Mappls (MapmyIndia) Distance Matrix / Route API
+    if (this.mapplsApiKey && process.env.NODE_ENV !== 'test') {
+      try {
+        const mapplsMode = mode === 'walk' ? 'walking' : 'biking';
+        const url = `https://apis.mappls.com/advancedmaps/v1/${this.mapplsApiKey}/distance_matrix/${mapplsMode}/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}`;
+
+        const response = await axios.get(url, { timeout: 3500 });
+        if (response.data?.results?.distances?.[0]?.[1] !== undefined) {
+          const distanceMeters = Math.round(response.data.results.distances[0][1]);
+          const durationSeconds = Math.round(response.data.results.durations[0][1] || 0);
+
+          logger.debug(`[MAPPLS] Route computed: ${distanceMeters}m in ${durationSeconds}s`);
+          return {
+            distanceMeters,
+            durationSeconds,
+            source: 'mappls_api',
+          };
+        }
+      } catch (err: any) {
+        logger.debug(
+          `[MAPPLS] API call fell back to secondary provider: ${err.response?.data?.msg || err.message}`
+        );
+      }
+    }
+
+    // 2. Attempt Google Routes API (Modern Directions v2)
     const travelModeMap = {
       cycle: 'BICYCLE',
       walk: 'WALK',
     };
 
-    // 1. Attempt Google Routes API (Modern Directions v2)
-    if (this.apiKey && process.env.NODE_ENV !== 'test') {
+    if (this.googleApiKey && process.env.NODE_ENV !== 'test') {
       try {
         const response = await axios.post(
           'https://routes.googleapis.com/directions/v2:computeRoutes',
@@ -59,17 +86,16 @@ export class GoogleMapsService {
           {
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': this.apiKey,
+              'X-Goog-Api-Key': this.googleApiKey,
               'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
             },
-            timeout: 3500, // 3.5s timeout for fast response
+            timeout: 3500,
           }
         );
 
         const route = response.data.routes?.[0];
         if (route) {
           const distanceMeters = route.distanceMeters || 0;
-          // Duration format from Google Routes is e.g. "450s"
           const durationSeconds = route.duration ? parseInt(route.duration.replace('s', ''), 10) : 0;
           const polyline = route.polyline?.encodedPolyline;
 
@@ -88,7 +114,7 @@ export class GoogleMapsService {
       }
     }
 
-    // 2. High-Precision Haversine Fallback Engine
+    // 3. High-Precision Haversine Fallback Engine
     const distanceMeters = Math.round(
       calculateHaversineDistance(
         origin.latitude,
@@ -110,13 +136,30 @@ export class GoogleMapsService {
   }
 
   /**
-   * Reverse geocode a latitude & longitude into a human-readable address
+   * Reverse geocode coordinates into a human-readable street address
+   * Cascade: Mappls -> Google Geocode -> Formatted Coordinates
    */
   async reverseGeocode(latitude: number, longitude: number): Promise<string> {
-    if (this.apiKey && process.env.NODE_ENV !== 'test') {
+    // 1. Mappls Rev Geocode
+    if (this.mapplsApiKey && process.env.NODE_ENV !== 'test') {
       try {
         const response = await axios.get(
-          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${this.apiKey}`,
+          `https://apis.mappls.com/advancedmaps/v1/${this.mapplsApiKey}/rev_geocode?lat=${latitude}&lng=${longitude}`,
+          { timeout: 3000 }
+        );
+        if (response.data?.results?.[0]?.formatted_address) {
+          return response.data.results[0].formatted_address;
+        }
+      } catch (err: any) {
+        logger.debug(`[MAPPLS] Reverse geocode fallback: ${err.message}`);
+      }
+    }
+
+    // 2. Google Geocode
+    if (this.googleApiKey && process.env.NODE_ENV !== 'test') {
+      try {
+        const response = await axios.get(
+          `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${this.googleApiKey}`,
           { timeout: 3000 }
         );
         if (response.data.results && response.data.results.length > 0) {
@@ -134,10 +177,10 @@ export class GoogleMapsService {
    * Geocode an address into latitude & longitude coordinates
    */
   async geocodeAddress(address: string): Promise<{ latitude: number; longitude: number } | null> {
-    if (this.apiKey && process.env.NODE_ENV !== 'test') {
+    if (this.googleApiKey && process.env.NODE_ENV !== 'test') {
       try {
         const response = await axios.get(
-          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${this.apiKey}`,
+          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${this.googleApiKey}`,
           { timeout: 3000 }
         );
         if (response.data.results && response.data.results.length > 0) {
