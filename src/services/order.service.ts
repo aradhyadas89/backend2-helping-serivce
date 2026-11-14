@@ -824,6 +824,129 @@ export class OrderService {
       partnerReputationScore: partnerReputation,
     };
   }
+
+  /**
+   * 13. Partner Marks Product Picked Up (Proceeds to final delivery)
+   */
+  async markProductPickedUp(orderId: string, partnerId: string): Promise<IOrder> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId, assignedPartnerId: partnerId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found for partner`);
+    }
+
+    const allowedStatuses = ['PAID', 'CASH_COLLECTED'];
+    if (!allowedStatuses.includes(order.status)) {
+      throw new BadRequestException(
+        `Product cannot be marked picked up from current status '${order.status}'. Payment/Cash collection must be completed first.`
+      );
+    }
+
+    order.status = 'DELIVERY_IN_PROGRESS';
+
+    const Partner = getPartnerModel();
+    const partner = await Partner.findOne({ partnerId });
+    const mode = partner?.transportMode || 'cycle';
+    const partnerLat = partner?.latitude || order.latitude;
+    const partnerLon = partner?.longitude || order.longitude;
+
+    const route = await googleMapsService.calculateRoute(
+      { latitude: partnerLat, longitude: partnerLon },
+      { latitude: order.latitude, longitude: order.longitude },
+      mode
+    );
+
+    order.deliveryTripEtaSeconds = route.durationSeconds;
+    order.deliveryTripExpiresAt = new Date(Date.now() + route.durationSeconds * 1000);
+    await order.save();
+
+    wsDispatcher.broadcast(`order:${order.orderId}`, {
+      type: 'PRODUCT_PICKED_UP',
+      orderId: order.orderId,
+      status: order.status,
+      deliveryEtaSeconds: route.durationSeconds,
+      message: 'Partner has picked up the product and is heading to your delivery location.',
+    });
+
+    return order;
+  }
+
+  /**
+   * 14. Customer Cancels Order
+   */
+  async cancelOrderByUser(orderId: string, userId: string, reason?: string): Promise<IOrder> {
+    const Order = getOrderModel();
+    const order = await Order.findOne({ orderId, userId });
+
+    if (!order) {
+      throw new NotFoundException(`Order ${orderId} not found for user`);
+    }
+
+    if (order.status === 'DELIVERED') {
+      throw new BadRequestException('Delivered orders cannot be cancelled');
+    }
+
+    if (order.status.startsWith('CANCELLED')) {
+      throw new ConflictException('Order has already been cancelled');
+    }
+
+    order.status = 'CANCELLED_BY_USER';
+
+    if (order.assignedPartnerId) {
+      const Partner = getPartnerModel();
+      await Partner.findOneAndUpdate(
+        { partnerId: order.assignedPartnerId },
+        { $set: { activeOrderId: null, isOnline: true } }
+      );
+    }
+
+    await order.save();
+
+    wsDispatcher.broadcast(`order:${order.orderId}`, {
+      type: 'ORDER_CANCELLED_BY_USER',
+      orderId: order.orderId,
+      reason: reason || 'Cancelled by customer',
+    });
+
+    return order;
+  }
+
+  /**
+   * 15. Get Active Order for Partner App
+   */
+  async getPartnerActiveOrder(partnerId: string): Promise<IOrder | null> {
+    const Order = getOrderModel();
+    return await Order.findOne({
+      assignedPartnerId: partnerId,
+      status: {
+        $nin: [
+          'DELIVERED',
+          'CANCELLED_PAYMENT_TIMEOUT',
+          'CANCELLED_SERVICE_UNAVAILABLE',
+          'CANCELLED_BY_USER',
+        ],
+      },
+    });
+  }
+
+  /**
+   * 16. Get Active Order for User App
+   */
+  async getUserActiveOrder(userId: string): Promise<IOrder | null> {
+    const Order = getOrderModel();
+    return await Order.findOne({
+      userId,
+      status: {
+        $nin: [
+          'DELIVERED',
+          'CANCELLED_PAYMENT_TIMEOUT',
+          'CANCELLED_SERVICE_UNAVAILABLE',
+          'CANCELLED_BY_USER',
+        ],
+      },
+    }).sort({ createdAt: -1 });
+  }
 }
 
 export const orderService = new OrderService();

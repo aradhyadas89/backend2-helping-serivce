@@ -11,6 +11,7 @@ import {
 import { rateOrderSchema } from '../schemas/partner.schema';
 import { orderService } from '../services/order.service';
 import { pricingService } from '../services/pricing.service';
+import { partnerDispatchService } from '../services/partner-dispatch.service';
 import { getOrderModel } from '../models/Order';
 import { sendSuccess } from '../utils/response.utils';
 import { NotFoundException } from '../middlewares/errorHandler';
@@ -101,6 +102,35 @@ router.post(
     }
   }
 );
+
+/**
+ * @route   GET /api/v1/orders/user/:userId/active
+ * @desc    Get currently active in-progress order for customer
+ */
+router.get('/user/:userId/active', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const activeOrder = await orderService.getUserActiveOrder(req.params.userId);
+    return sendSuccess(res, activeOrder, activeOrder ? 'Active order retrieved' : 'No active orders in progress');
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/v1/orders/rush-status
+ * @desc    Inspect current order rush and partner load in 2.5km delivery zone
+ */
+router.get('/rush-status', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const latitude = parseFloat(req.query.latitude as string) || 22.5726;
+    const longitude = parseFloat(req.query.longitude as string) || 88.3639;
+
+    const rush = await partnerDispatchService.detectOrderRush(latitude, longitude);
+    return sendSuccess(res, rush, 'Order rush and capacity status evaluated');
+  } catch (error) {
+    next(error);
+  }
+});
 
 /**
  * @route   GET /api/v1/orders/:orderId
@@ -284,6 +314,34 @@ router.post('/:orderId/request-mercy-extension', async (req: Request, res: Respo
     );
 
     return sendSuccess(res, result, result.message);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/orders/:orderId/product-picked-up
+ * @desc    Partner confirms product picked up from merchant -> transition to DELIVERY_IN_PROGRESS
+ */
+router.post('/:orderId/product-picked-up', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const partnerId = req.user?.userId || req.body.partnerId;
+    const order = await orderService.markProductPickedUp(req.params.orderId, partnerId);
+    return sendSuccess(res, order, 'Product marked picked up. Delivery in progress.');
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/orders/:orderId/cancel
+ * @desc    Customer cancels active order before delivery
+ */
+router.post('/:orderId/cancel', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = req.user?.userId || req.body.userId;
+    const order = await orderService.cancelOrderByUser(req.params.orderId, userId, req.body.reason);
+    return sendSuccess(res, order, 'Order cancelled successfully.');
   } catch (error) {
     next(error);
   }

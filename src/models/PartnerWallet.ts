@@ -6,7 +6,7 @@ export interface IWalletTransaction {
   orderId?: string;
   amount: number; // in ₹
   type: 'credit' | 'debit';
-  category: 'delivery_fee' | 'cash_settlement' | 'bonus' | 'penalty_deduction';
+  category: 'delivery_fee' | 'cash_settlement' | 'bonus' | 'penalty_deduction' | 'withdrawal';
   description: string;
   createdAt: Date;
 }
@@ -41,7 +41,7 @@ const WalletTransactionSchema = new Schema<IWalletTransaction>(
     },
     category: {
       type: String,
-      enum: ['delivery_fee', 'cash_settlement', 'bonus', 'penalty_deduction'],
+      enum: ['delivery_fee', 'cash_settlement', 'bonus', 'penalty_deduction', 'withdrawal'],
       required: true,
     },
     description: {

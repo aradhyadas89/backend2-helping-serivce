@@ -566,4 +566,145 @@ describe('Comprehensive Bug Test Suite: Multi-DB Sub-Backend Edge Cases', () => 
       expect(foundDeleted).toBe(false);
     });
   });
+
+  describe('Bug Test 11: Missing Features Verification (Pickup, Cancellation, Active Orders, Rush Status, Wallet Withdrawal & Transactions)', () => {
+    it('should evaluate 2.5km delivery rush status and active order queries for customer and partner', async () => {
+      // 1. Rush Status
+      const rushRes = await request(app)
+        .get('/api/v1/orders/rush-status')
+        .query({ latitude: 22.5726, longitude: 88.3639 });
+
+      expect(rushRes.status).toBe(200);
+      expect(rushRes.body.success).toBe(true);
+      expect(rushRes.body.data.availablePartnersInZone).toBeGreaterThanOrEqual(1);
+      expect(typeof rushRes.body.data.isRush).toBe('boolean');
+      expect(rushRes.body.data.rushRatio).toBeDefined();
+
+      // 2. Active order when none exists
+      const emptyActiveRes = await request(app).get('/api/v1/orders/user/user_new_feature_test/active');
+      expect(emptyActiveRes.status).toBe(200);
+      expect(emptyActiveRes.body.data).toBeNull();
+
+      // 3. Create active order for user
+      const Order = getOrderModel();
+      const testOrderId = `ORD-NEWFEAT-${Date.now()}`;
+      const activeOrder = await Order.create({
+        orderId: testOrderId,
+        userId: 'user_new_feature_test',
+        userName: 'Feature Customer',
+        userEmail: 'feat@example.com',
+        userPhone: '9876543299',
+        deliveryLocation: { type: 'Point', coordinates: [88.3639, 22.5726] },
+        latitude: 22.5726,
+        longitude: 88.3639,
+        deliveryAddress: 'Park Street, Kolkata',
+        items: [{ productId: prodPenId, title: 'Gel Pen', price: 30, quantity: 1, subtotal: 30 }],
+        subtotal: 30,
+        deliveryFee: 15,
+        totalAmount: 45,
+        status: 'PAID',
+        assignedPartnerId: partner1Id,
+        partnerTransportMode: 'cycle',
+      });
+
+      // 4. Verify Customer Active Order
+      const userActiveRes = await request(app).get('/api/v1/orders/user/user_new_feature_test/active');
+      expect(userActiveRes.status).toBe(200);
+      expect(userActiveRes.body.data.orderId).toBe(testOrderId);
+
+      // 5. Verify Partner Active Order
+      const partnerActiveRes = await request(app).get(`/api/v1/partners/${partner1Id}/active-order`);
+      expect(partnerActiveRes.status).toBe(200);
+      expect(partnerActiveRes.body.data.orderId).toBe(testOrderId);
+
+      // 6. Product Picked Up Lifecycle Transition
+      const pickupRes = await request(app)
+        .post(`/api/v1/orders/${testOrderId}/product-picked-up`)
+        .send({ partnerId: partner1Id });
+
+      expect(pickupRes.status).toBe(200);
+      expect(pickupRes.body.data.status).toBe('DELIVERY_IN_PROGRESS');
+      expect(pickupRes.body.data.deliveryTripEtaSeconds).toBeGreaterThan(0);
+
+      // Invalid pickup attempt when already picked up
+      const invalidPickupRes = await request(app)
+        .post(`/api/v1/orders/${testOrderId}/product-picked-up`)
+        .send({ partnerId: partner1Id });
+      expect(invalidPickupRes.status).toBe(400);
+
+      // 7. Customer Order Cancellation
+      const cancelRes = await request(app)
+        .post(`/api/v1/orders/${testOrderId}/cancel`)
+        .send({ userId: 'user_new_feature_test', reason: 'Customer changed plans' });
+
+      expect(cancelRes.status).toBe(200);
+      expect(cancelRes.body.data.status).toBe('CANCELLED_BY_USER');
+
+      // Cannot cancel already cancelled order
+      const cancelTwiceRes = await request(app)
+        .post(`/api/v1/orders/${testOrderId}/cancel`)
+        .send({ userId: 'user_new_feature_test' });
+      expect(cancelTwiceRes.status).toBe(409);
+
+      // Active order now returns null
+      const postCancelActiveRes = await request(app).get('/api/v1/orders/user/user_new_feature_test/active');
+      expect(postCancelActiveRes.status).toBe(200);
+      expect(postCancelActiveRes.body.data).toBeNull();
+    });
+
+    it('should process partner wallet withdrawals and maintain paginated transaction ledgers', async () => {
+      const PartnerWallet = getPartnerWalletModel();
+      const testPartnerId = `PTR-WDL-${Date.now()}`;
+
+      // Initialize partner wallet with starting virtual balance
+      await PartnerWallet.create({
+        partnerId: testPartnerId,
+        virtualBalance: 500.0,
+        totalEarned: 500.0,
+        transactions: [
+          {
+            transactionId: `TXN-INIT-${Date.now()}`,
+            amount: 500.0,
+            type: 'credit',
+            category: 'delivery_fee',
+            description: 'Accumulated delivery earnings',
+            createdAt: new Date(),
+          },
+        ],
+      });
+
+      // 1. Successful withdrawal of ₹175
+      const withdrawRes = await request(app)
+        .post(`/api/v1/partners/${testPartnerId}/wallet/withdraw`)
+        .send({ amount: 175 });
+
+      expect(withdrawRes.status).toBe(200);
+      expect(withdrawRes.body.data.withdrawnAmount).toBe(175);
+      expect(withdrawRes.body.data.remainingBalance).toBe(325);
+      expect(withdrawRes.body.data.transaction.category).toBe('withdrawal');
+
+      // 2. Overdraft rejection
+      const overdraftRes = await request(app)
+        .post(`/api/v1/partners/${testPartnerId}/wallet/withdraw`)
+        .send({ amount: 1000 });
+      expect(overdraftRes.status).toBe(400);
+      expect(overdraftRes.body.error.message).toMatch(/Insufficient virtual balance/);
+
+      // 3. Invalid / non-positive amount rejection
+      const negativeRes = await request(app)
+        .post(`/api/v1/partners/${testPartnerId}/wallet/withdraw`)
+        .send({ amount: -50 });
+      expect(negativeRes.status).toBe(400);
+
+      // 4. View transaction history
+      const historyRes = await request(app)
+        .get(`/api/v1/partners/${testPartnerId}/wallet/transactions`)
+        .query({ page: 1, limit: 10 });
+
+      expect(historyRes.status).toBe(200);
+      expect(historyRes.body.data.length).toBe(2); // 1 credit + 1 withdrawal debit
+      expect(historyRes.body.data[0].category).toBe('withdrawal');
+      expect(historyRes.body.total).toBe(2);
+    });
+  });
 });

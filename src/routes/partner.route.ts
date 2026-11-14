@@ -10,12 +10,14 @@ import { getPartnerModel } from '../models/Partner';
 import { getPartnerWalletModel } from '../models/PartnerWallet';
 import { partnerDispatchService } from '../services/partner-dispatch.service';
 import { partnerAnalysisService } from '../services/partner-analysis.service';
+import { orderService } from '../services/order.service';
 import { hashPassword, verifyPassword, generatePartnerToken } from '../utils/auth.utils';
 import { sendSuccess } from '../utils/response.utils';
 import {
   NotFoundException,
   ConflictException,
   UnauthorizedException,
+  BadRequestException,
 } from '../middlewares/errorHandler';
 
 const router = Router();
@@ -263,6 +265,112 @@ router.get('/:partnerId/wallet', async (req: Request, res: Response, next: NextF
     }
 
     return sendSuccess(res, wallet, 'Partner virtual wallet retrieved successfully');
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/partners/:partnerId/wallet/withdraw
+ * @desc    Withdraw delivery earnings from virtual balance
+ */
+router.post('/:partnerId/wallet/withdraw', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const amount = Number(req.body.amount);
+
+    if (isNaN(amount) || amount <= 0) {
+      throw new BadRequestException('A valid positive withdrawal amount is required');
+    }
+
+    const PartnerWallet = getPartnerWalletModel();
+    const wallet = await PartnerWallet.findOne({ partnerId: req.params.partnerId });
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet for partner ${req.params.partnerId} not found`);
+    }
+
+    if (wallet.virtualBalance < amount) {
+      throw new BadRequestException(
+        `Insufficient virtual balance for withdrawal. Current balance: ₹${wallet.virtualBalance.toFixed(2)}, Requested: ₹${amount.toFixed(2)}`
+      );
+    }
+
+    wallet.virtualBalance = Math.round((wallet.virtualBalance - amount) * 100) / 100;
+
+    const txn = {
+      transactionId: `TXN-WDL-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      amount,
+      type: 'debit' as const,
+      category: 'withdrawal' as const,
+      description: `Partner withdrawal of ₹${amount.toFixed(2)} to linked payout account`,
+      createdAt: new Date(),
+    };
+
+    wallet.transactions.push(txn);
+    await wallet.save();
+
+    return sendSuccess(
+      res,
+      {
+        partnerId: wallet.partnerId,
+        withdrawnAmount: amount,
+        remainingBalance: wallet.virtualBalance,
+        transaction: txn,
+      },
+      'Withdrawal processed successfully'
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/v1/partners/:partnerId/wallet/transactions
+ * @desc    Get partner wallet ledger transaction history with pagination
+ */
+router.get('/:partnerId/wallet/transactions', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { limit = '20', page = '1' } = req.query as any;
+    const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10)));
+    const pageNum = Math.max(1, parseInt(page, 10));
+
+    const PartnerWallet = getPartnerWalletModel();
+    const wallet = await PartnerWallet.findOne({ partnerId: req.params.partnerId }).lean();
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet for partner ${req.params.partnerId} not found`);
+    }
+
+    const allTxns = (wallet.transactions || []).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    const total = allTxns.length;
+    const skip = (pageNum - 1) * limitNum;
+    const paginated = allTxns.slice(skip, skip + limitNum);
+
+    return sendSuccess(res, paginated, 'Wallet transactions retrieved successfully', 200, {
+      total,
+      count: paginated.length,
+      meta: { page: pageNum, totalPages: Math.ceil(total / limitNum) || 1 },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/v1/partners/:partnerId/active-order
+ * @desc    Get currently active assigned delivery order for partner
+ */
+router.get('/:partnerId/active-order', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const activeOrder = await orderService.getPartnerActiveOrder(req.params.partnerId);
+    return sendSuccess(
+      res,
+      activeOrder,
+      activeOrder ? 'Active partner order retrieved' : 'No active orders in progress'
+    );
   } catch (error) {
     next(error);
   }

@@ -236,6 +236,53 @@ export class PartnerDispatchService {
           } more online order(s) to maintain the 5:1 ratio balance.`,
     };
   }
+
+  /**
+   * Evaluate Order Rush in the 2.5km delivery zone
+   */
+  async detectOrderRush(
+    latitude: number,
+    longitude: number
+  ): Promise<{
+    isRush: boolean;
+    activeOrdersInZone: number;
+    availablePartnersInZone: number;
+    rushRatio: number;
+    recommendation: string;
+  }> {
+    const Order = getOrderModel();
+    const availability = await this.checkPartnerAvailability(latitude, longitude);
+
+    const activeOrdersInZone = await Order.countDocuments({
+      status: {
+        $in: [
+          'SEARCHING_PARTNER',
+          'PAYMENT_PENDING',
+          'PAID',
+          'CASH_COLLECTION_IN_PROGRESS',
+          'DELIVERY_IN_PROGRESS',
+        ],
+      },
+      createdAt: { $gte: new Date(Date.now() - 30 * 60 * 1000) },
+    });
+
+    const availablePartners = availability.availableCount;
+    const rushRatio =
+      availablePartners > 0
+        ? Math.round((activeOrdersInZone / availablePartners) * 10) / 10
+        : activeOrdersInZone;
+    const isRush = rushRatio >= 2.0;
+
+    return {
+      isRush,
+      activeOrdersInZone,
+      availablePartnersInZone: availablePartners,
+      rushRatio,
+      recommendation: isRush
+        ? 'High order rush detected in zone. Fast-track concentric ring delays by 50% and activate secondary partner pool.'
+        : 'Normal operational load in delivery zone.',
+    };
+  }
 }
 
 export const partnerDispatchService = new PartnerDispatchService();
