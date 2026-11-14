@@ -83,11 +83,20 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
       clientInfo.isAlive = true;
     });
 
-    ws.on('message', async (messageRaw: string) => {
+    ws.on('message', async (messageRaw: string | Buffer) => {
       try {
+        if (messageRaw.length > 65536) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Payload size exceeds 64KB limit' }));
+          return;
+        }
+
         const msg = JSON.parse(messageRaw.toString());
 
         if (msg.action === 'subscribe' && msg.channel) {
+          if (clientInfo.subscriptions.size >= 50) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Maximum subscription channels limit reached (50)' }));
+            return;
+          }
           clientInfo.subscriptions.add(msg.channel);
           ws.send(
             JSON.stringify({

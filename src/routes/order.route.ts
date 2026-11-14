@@ -65,7 +65,12 @@ router.get(
 
       const skip = (page - 1) * limit;
       const [orders, total] = await Promise.all([
-        Order.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+        Order.find(filter)
+          .select('-cashCollectionOtp -deliveryOtp')
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
         Order.countDocuments(filter),
       ]);
 
@@ -139,7 +144,9 @@ router.get('/rush-status', async (req: Request, res: Response, next: NextFunctio
 router.get('/:orderId', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const Order = getOrderModel();
-    const order = await Order.findOne({ orderId: req.params.orderId }).lean();
+    const order = await Order.findOne({ orderId: req.params.orderId })
+      .select('-cashCollectionOtp -deliveryOtp')
+      .lean();
 
     if (!order) {
       throw new NotFoundException(`Order ${req.params.orderId} not found`);

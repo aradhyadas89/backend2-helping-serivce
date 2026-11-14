@@ -144,7 +144,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const filter: Record<string, any> = {};
 
     if (isOnline !== undefined) filter.isOnline = isOnline === 'true';
-    if (transportMode) filter.transportMode = transportMode;
+    if (transportMode && typeof transportMode === 'string' && ['cycle', 'walk'].includes(transportMode)) {
+      filter.transportMode = transportMode;
+    }
 
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10)));
     const pageNum = Math.max(1, parseInt(page, 10));
@@ -280,9 +282,14 @@ router.get('/:partnerId/wallet', async (req: Request, res: Response, next: NextF
  */
 router.post('/:partnerId/wallet/withdraw', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const amount = Number(req.body.amount);
+    const rawAmount = Number(req.body.amount);
 
-    if (isNaN(amount) || amount <= 0) {
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+      throw new BadRequestException('A valid positive withdrawal amount is required');
+    }
+
+    const amount = Math.round(rawAmount * 100) / 100;
+    if (amount <= 0) {
       throw new BadRequestException('A valid positive withdrawal amount is required');
     }
 

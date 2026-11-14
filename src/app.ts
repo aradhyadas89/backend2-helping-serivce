@@ -41,7 +41,7 @@ export function createApp(): Application {
         ) {
           return callback(null, true);
         }
-        return callback(new Error(`CORS origin not allowed: ${origin}`));
+        return callback(null, false);
       },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

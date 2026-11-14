@@ -402,7 +402,13 @@ export class OrderService {
       throw new NotFoundException(`Order ${orderId} not found for partner`);
     }
 
+    if ((order.failedCashOtpAttempts || 0) >= 5) {
+      throw new BadRequestException('Too many failed OTP attempts. Maximum 5 attempts allowed.');
+    }
+
     if (!order.cashCollectionOtp || order.cashCollectionOtp !== otp) {
+      order.failedCashOtpAttempts = (order.failedCashOtpAttempts || 0) + 1;
+      await order.save();
       throw new BadRequestException('Invalid Cash Collection OTP');
     }
 
@@ -410,6 +416,7 @@ export class OrderService {
       throw new BadRequestException('Cash Collection OTP has expired');
     }
 
+    order.failedCashOtpAttempts = 0;
     order.isCashCollected = true;
     order.cashCollectedAt = new Date();
     order.status = 'CASH_COLLECTED';
@@ -453,13 +460,21 @@ export class OrderService {
       throw new NotFoundException('Order or Partner not found');
     }
 
+    if ((order.failedDeliveryOtpAttempts || 0) >= 5) {
+      throw new BadRequestException('Too many failed OTP attempts. Maximum 5 attempts allowed.');
+    }
+
     if (!order.deliveryOtp || order.deliveryOtp !== otp) {
+      order.failedDeliveryOtpAttempts = (order.failedDeliveryOtpAttempts || 0) + 1;
+      await order.save();
       throw new BadRequestException('Invalid Delivery Confirmation OTP');
     }
 
     if (order.deliveryOtpExpiresAt && new Date() > order.deliveryOtpExpiresAt) {
       throw new BadRequestException('Delivery Confirmation OTP has expired');
     }
+
+    order.failedDeliveryOtpAttempts = 0;
 
     // Mark Order Delivered
     order.status = 'DELIVERED';
@@ -927,7 +942,7 @@ export class OrderService {
           'CANCELLED_BY_USER',
         ],
       },
-    });
+    }).select('-cashCollectionOtp -deliveryOtp');
   }
 
   /**
@@ -945,7 +960,9 @@ export class OrderService {
           'CANCELLED_BY_USER',
         ],
       },
-    }).sort({ createdAt: -1 });
+    })
+      .select('-cashCollectionOtp -deliveryOtp')
+      .sort({ createdAt: -1 });
   }
 }
 

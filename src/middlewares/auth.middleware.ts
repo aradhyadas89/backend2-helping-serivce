@@ -1,8 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
 import { UnauthorizedException, ForbiddenException } from './errorHandler';
 import { AuthUser, UserRole } from '../types';
+
+/**
+ * Constant-time comparison using pre-hashed SHA-256 buffers to eliminate timing attacks
+ */
+export function timingSafeSecretCheck(provided: string, expected: string): boolean {
+  if (!provided || !expected) return false;
+  const hashProvided = crypto.createHash('sha256').update(provided).digest();
+  const hashExpected = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(hashProvided, hashExpected);
+}
 
 /**
  * Verifies shared secret credentials for internal service-to-service communication
@@ -19,8 +30,9 @@ export function verifyInternalSecret(req: Request, _res: Response, next: NextFun
   const providedSecret = secretHeader || token;
 
   const validSecrets = [env.ADMIN_SUB_BACKEND_SECRET, env.ANALYSIS_ENGINE_SECRET];
+  const isMatch = !!providedSecret && validSecrets.some((s) => timingSafeSecretCheck(providedSecret, s));
 
-  if (!providedSecret || !validSecrets.includes(providedSecret)) {
+  if (!providedSecret || !isMatch) {
     return next(
       new UnauthorizedException('Unauthorized. Invalid Sub-Backend shared secret credentials.')
     );
@@ -83,8 +95,8 @@ export function requireInternalOrAdmin(req: Request, res: Response, next: NextFu
 
   if (
     secretHeader &&
-    (secretHeader === env.ADMIN_SUB_BACKEND_SECRET ||
-      secretHeader === env.ANALYSIS_ENGINE_SECRET)
+    (timingSafeSecretCheck(secretHeader, env.ADMIN_SUB_BACKEND_SECRET) ||
+      timingSafeSecretCheck(secretHeader, env.ANALYSIS_ENGINE_SECRET))
   ) {
     req.isInternalService = true;
     return next();
@@ -94,8 +106,8 @@ export function requireInternalOrAdmin(req: Request, res: Response, next: NextFu
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1];
     if (
-      token === env.ADMIN_SUB_BACKEND_SECRET ||
-      token === env.ANALYSIS_ENGINE_SECRET
+      timingSafeSecretCheck(token, env.ADMIN_SUB_BACKEND_SECRET) ||
+      timingSafeSecretCheck(token, env.ANALYSIS_ENGINE_SECRET)
     ) {
       req.isInternalService = true;
       return next();

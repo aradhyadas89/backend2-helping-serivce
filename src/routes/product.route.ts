@@ -15,12 +15,16 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     const Product = getProductModel();
     const filter: Record<string, any> = { isActive: true, isDeleted: false };
 
-    if (category) filter.category = category;
-    if (search) {
+    if (category && typeof category === 'string' && category.trim()) {
+      filter.category = String(category).trim();
+    }
+    if (search && typeof search === 'string' && search.trim()) {
+      // Escape regex special characters to prevent ReDoS / injection
+      const sanitized = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { tags: { $in: [new RegExp(search, 'i')] } },
+        { title: { $regex: sanitized, $options: 'i' } },
+        { description: { $regex: sanitized, $options: 'i' } },
+        { tags: { $in: [new RegExp(sanitized, 'i')] } },
       ];
     }
 

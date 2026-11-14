@@ -67,6 +67,7 @@ export interface IOrder extends Document {
   // Offline Cash Collection Handshake
   cashCollectionOtp?: string;
   cashCollectionOtpExpiresAt?: Date;
+  failedCashOtpAttempts?: number;
   isCashCollected: boolean;
   cashCollectedAt?: Date;
   cashTripEtaSeconds?: number;
@@ -77,6 +78,7 @@ export interface IOrder extends Document {
   // Delivery Handshake
   deliveryOtp?: string;
   deliveryOtpExpiresAt?: Date;
+  failedDeliveryOtpAttempts?: number;
   deliveryTripEtaSeconds?: number;
   deliveryTripExpiresAt?: Date;
   deliveryTripMercyUsed: boolean;
@@ -228,6 +230,10 @@ export const OrderSchema = new Schema<IOrder>(
     paidAt: Date,
     cashCollectionOtp: String,
     cashCollectionOtpExpiresAt: Date,
+    failedCashOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
     isCashCollected: {
       type: Boolean,
       default: false,
@@ -245,6 +251,10 @@ export const OrderSchema = new Schema<IOrder>(
     },
     deliveryOtp: String,
     deliveryOtpExpiresAt: Date,
+    failedDeliveryOtpAttempts: {
+      type: Number,
+      default: 0,
+    },
     deliveryTripEtaSeconds: Number,
     deliveryTripExpiresAt: Date,
     deliveryTripMercyUsed: {
