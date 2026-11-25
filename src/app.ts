@@ -169,3 +169,5 @@ export function createApp(): Application {
   return app;
 }
 
+export const app = createApp();
+

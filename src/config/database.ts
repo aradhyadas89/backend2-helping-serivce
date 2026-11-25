@@ -71,6 +71,13 @@ let cachedConnectionPromise: Promise<typeof mongoose> | null = null;
  */
 export async function connectDB(): Promise<void> {
   if (isMultiCluster && ordersConnection && fleetConnection && telemetryConnection) {
+    if (
+      ordersConnection.readyState === 1 &&
+      fleetConnection.readyState === 1 &&
+      telemetryConnection.readyState === 1
+    ) {
+      return;
+    }
     logger.info('Connecting to 3 Dedicated Sub-Backend 2 MongoDB Atlas Clusters...');
     try {
       await Promise.all([
