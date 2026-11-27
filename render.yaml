@@ -74,7 +74,7 @@ services:
 
       # Main Backend Interconnect
       - key: MAIN_BACKEND_URL
-        sync: false
+        value: https://helper-fullstack-backend-selc.onrender.com
 
       # Transactional Email & Delivery OTP
       - key: SMTP_HOST
