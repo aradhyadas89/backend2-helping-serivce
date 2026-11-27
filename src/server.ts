@@ -8,7 +8,6 @@ import { setupWebSocketServer } from './websocket/ws-server';
 import { userAnalysisService } from './services/user-analysis.service';
 import { orderService } from './services/order.service';
 import { livePingService } from './services/live-ping.service';
-import { livePingService } from './services/live-ping.service';
 
 async function bootstrap() {
   try {
