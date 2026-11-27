@@ -5,15 +5,23 @@ import path from 'path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 function parseCorsOrigins(raw: string | undefined): string[] {
-  if (!raw) return ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:8000'];
+  const defaultOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:8000',
+    'https://helper-fullstack-backend-selc.onrender.com',
+    'https://backend2-helping-serivce.onrender.com',
+    'https://backend3-helping-services.onrender.com',
+  ];
+  if (!raw) return defaultOrigins;
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) return Array.from(new Set([...defaultOrigins, ...parsed]));
   } catch {
     // If not JSON, handle as comma-separated list
-    return raw.split(',').map((origin) => origin.trim()).filter(Boolean);
+    return Array.from(new Set([...defaultOrigins, ...raw.split(',').map((origin) => origin.trim()).filter(Boolean)]));
   }
-  return ['http://localhost:3000', 'http://localhost:5173', 'http://localhost:8000'];
+  return defaultOrigins;
 }
 
 export const env = {
@@ -40,8 +48,11 @@ export const env = {
   RAZORPAY_WEBHOOK_SECRET:
     process.env.RAZORPAY_WEBHOOK_SECRET || 'helping-services-razorpay-webhook-secret-2026',
 
-  // Main Backend Interconnect
-  MAIN_BACKEND_URL: process.env.MAIN_BACKEND_URL || 'http://localhost:8000',
+  // Interconnected Backends Topology
+  MAIN_BACKEND_URL: process.env.MAIN_BACKEND_URL || 'https://helper-fullstack-backend-selc.onrender.com',
+  BACKEND2_URL: process.env.BACKEND2_URL || process.env.RENDER_EXTERNAL_URL || 'https://backend2-helping-serivce.onrender.com',
+  BACKEND3_URL: process.env.BACKEND3_URL || 'https://backend3-helping-services.onrender.com',
+  BACKEND4_URL: process.env.BACKEND4_URL || 'https://backend3-helping-services.onrender.com',
 
   // Database URLs (3 Dedicated Sub-Backend 2 Interconnected Databases - Completely Separate from Main DB)
   MONGODB_URL: process.env.MONGODB_URL || 'mongodb://localhost:27017/helping_sub2_orders',
@@ -104,15 +115,18 @@ export const env = {
 
   // Render Cloud & Production Infrastructure
   IS_RENDER: process.env.RENDER === 'true',
-  RENDER_EXTERNAL_URL: process.env.RENDER_EXTERNAL_URL || '',
+  RENDER_EXTERNAL_URL: process.env.RENDER_EXTERNAL_URL || 'https://backend2-helping-serivce.onrender.com',
   RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID || '',
   RENDER_INSTANCE_ID: process.env.RENDER_INSTANCE_ID || '',
 
   // Live Ping & Self-Heartbeat System
   LIVE_PING_ENABLED: process.env.LIVE_PING_ENABLED !== 'false',
   LIVE_PING_INTERVAL_MINUTES: parseInt(process.env.LIVE_PING_INTERVAL_MINUTES || '10', 10),
-  LIVE_PING_URL: process.env.LIVE_PING_URL || '',
-  LIVE_PING_EXTERNAL_TARGETS: (process.env.LIVE_PING_EXTERNAL_TARGETS || '')
+  LIVE_PING_URL: process.env.LIVE_PING_URL || 'https://backend2-helping-serivce.onrender.com/live-ping',
+  LIVE_PING_EXTERNAL_TARGETS: (
+    process.env.LIVE_PING_EXTERNAL_TARGETS ||
+    'https://helper-fullstack-backend-selc.onrender.com/api/v1/health,https://backend3-helping-services.onrender.com/live-ping'
+  )
     .split(',')
     .map((u) => u.trim())
     .filter(Boolean),

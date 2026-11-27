@@ -283,17 +283,19 @@ export class LivePingService {
 
     // Warm-up ping 15 seconds after server startup
     this.warmupTimer = setTimeout(async () => {
-      logger.info('[LIVE-PING] Firing post-boot warm-up heartbeat probe...');
+      logger.info('[LIVE-PING] Firing post-boot warm-up heartbeat probe across cluster...');
       await this.pingSelf();
+      await this.pingExternalTargets();
     }, 15000);
 
     if (this.warmupTimer.unref) {
       this.warmupTimer.unref();
     }
 
-    // Recurring keep-alive timer
+    // Recurring keep-alive timer (pings self and all interconnected backends)
     this.pingTimer = setInterval(async () => {
       await this.pingSelf();
+      await this.pingExternalTargets();
     }, intervalMs);
 
     if (this.pingTimer.unref) {
@@ -418,6 +420,12 @@ export class LivePingService {
       seconds: number;
       human: string;
     };
+    interconnectedServices: {
+      mainBackend: string;
+      backend2: string;
+      backend3: string;
+      backend4: string;
+    };
     render: {
       isRender: boolean;
       externalUrl: string | null;
@@ -479,6 +487,12 @@ export class LivePingService {
       uptime: {
         seconds: uptimeSec,
         human: this.formatUptime(uptimeSec),
+      },
+      interconnectedServices: {
+        mainBackend: env.MAIN_BACKEND_URL,
+        backend2: env.BACKEND2_URL,
+        backend3: env.BACKEND3_URL,
+        backend4: env.BACKEND4_URL,
       },
       render: {
         isRender: env.IS_RENDER,

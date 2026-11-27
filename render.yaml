@@ -72,9 +72,21 @@ services:
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
 
-      # Main Backend Interconnect
+      # Interconnected Backends Topology
       - key: MAIN_BACKEND_URL
         value: https://helper-fullstack-backend-selc.onrender.com
+      - key: BACKEND2_URL
+        value: https://backend2-helping-serivce.onrender.com
+      - key: BACKEND3_URL
+        value: https://backend3-helping-services.onrender.com
+      - key: BACKEND4_URL
+        value: https://backend3-helping-services.onrender.com
+      - key: RENDER_EXTERNAL_URL
+        value: https://backend2-helping-serivce.onrender.com
+      - key: LIVE_PING_URL
+        value: https://backend2-helping-serivce.onrender.com/live-ping
+      - key: LIVE_PING_EXTERNAL_TARGETS
+        value: https://helper-fullstack-backend-selc.onrender.com/api/v1/health,https://backend3-helping-services.onrender.com/live-ping
 
       # Transactional Email & Delivery OTP
       - key: SMTP_HOST

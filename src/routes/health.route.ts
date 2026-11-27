@@ -32,6 +32,12 @@ router.get('/', (_req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     uptimeSeconds,
     uptimeHuman: livePingService.formatUptime(uptimeSeconds),
+    interconnectedServices: {
+      mainBackend: env.MAIN_BACKEND_URL,
+      backend2: env.BACKEND2_URL,
+      backend3: env.BACKEND3_URL,
+      backend4: env.BACKEND4_URL,
+    },
     render: {
       isRender: env.IS_RENDER,
       externalUrl: env.RENDER_EXTERNAL_URL || null,
@@ -82,6 +88,12 @@ router.get('/ping', (_req: Request, res: Response) => {
       orders: dbHealth.databases.orders,
       fleet: dbHealth.databases.fleet,
       telemetry: dbHealth.databases.telemetry,
+    },
+    interconnectedServices: {
+      mainBackend: env.MAIN_BACKEND_URL,
+      backend2: env.BACKEND2_URL,
+      backend3: env.BACKEND3_URL,
+      backend4: env.BACKEND4_URL,
     },
     selfPing: {
       workerRunning: telemetry.workerRunning,
