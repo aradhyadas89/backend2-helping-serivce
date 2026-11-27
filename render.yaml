@@ -1,0 +1,93 @@
+# Render Blueprint Specification for Helping Services Sub-Backend
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: backend2-helping-service
+    runtime: node
+    plan: starter # Change to free if using Render free tier
+    region: singapore # Recommended region for India/South-Asia lowest latency
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /live-ping
+    autoDeploy: true
+
+    envVars:
+      # Platform & Runtime Environment
+      - key: NODE_ENV
+        value: production
+      - key: ENVIRONMENT
+        value: production
+      - key: PROJECT_NAME
+        value: Helping Services Sub-Backend
+      - key: VERSION
+        value: 1.0.0
+      - key: HOST
+        value: 0.0.0.0
+      - key: API_V1_STR
+        value: /api/v1
+      - key: BACKEND_CORS_ORIGINS
+        value: '["*"]'
+
+      # Anti-Sleep Live Ping System
+      - key: LIVE_PING_ENABLED
+        value: "true"
+      - key: LIVE_PING_INTERVAL_MINUTES
+        value: "10"
+
+      # Interconnected MongoDB Databases (Set in Render Dashboard Secret Store)
+      - key: MONGODB_URL
+        sync: false
+      - key: MONGODB_ORDERS_URL
+        sync: false
+      - key: MONGODB_ORDERS_DB_NAME
+        value: helping_sub2_orders
+      - key: MONGODB_FLEET_URL
+        sync: false
+      - key: MONGODB_FLEET_DB_NAME
+        value: helping_sub2_fleet
+      - key: MONGODB_TELEMETRY_URL
+        sync: false
+      - key: MONGODB_TELEMETRY_DB_NAME
+        value: helping_sub2_telemetry
+
+      # Zero-Trust Secrets & Cryptographic Keys
+      - key: ADMIN_SUB_BACKEND_SECRET
+        sync: false
+      - key: ANALYSIS_ENGINE_SECRET
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+
+      # Geospatial & Navigation APIs
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: MAPPLS_API_KEY
+        sync: false
+
+      # Razorpay Payment Gateway
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+
+      # Main Backend Interconnect
+      - key: MAIN_BACKEND_URL
+        sync: false
+
+      # Transactional Email & Delivery OTP
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        value: Helping Services <helpingservicesteam@gmail.com>
+      - key: SMTP_SECURE
+        value: "true"
+      - key: OTP_EXPIRES_IN_MINUTES
+        value: "10"

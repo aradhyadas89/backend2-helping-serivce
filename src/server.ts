@@ -7,6 +7,7 @@ import { getCacheClient } from './config/redis';
 import { setupWebSocketServer } from './websocket/ws-server';
 import { userAnalysisService } from './services/user-analysis.service';
 import { orderService } from './services/order.service';
+import { livePingService } from './services/live-ping.service';
 
 async function bootstrap() {
   try {
@@ -32,9 +33,10 @@ async function bootstrap() {
     // 5. Initialize WebSocket Server for live map streaming and security alerts
     const wss = setupWebSocketServer(server);
 
-    // 6. Start Background Intelligence Worker & Payment Sweeper
+    // 6. Start Background Intelligence Worker, Payment Sweeper & Live Ping Anti-Sleep Worker
     userAnalysisService.startAutoWorker();
     orderService.startPaymentTimeoutSweeper();
+    livePingService.startLivePingWorker();
 
     // 7. Start Listening
     server.listen(env.PORT, env.HOST, () => {
@@ -57,9 +59,10 @@ async function bootstrap() {
         logger.info('WebSocket server closed');
       });
 
-      // Stop background analysis timers and payment sweeper
+      // Stop background analysis timers, payment sweeper, and live ping worker
       userAnalysisService.stopAutoWorker();
       orderService.stopPaymentTimeoutSweeper();
+      livePingService.stopLivePingWorker();
 
       // Close DB connection pools
       await closeDB();

@@ -5,12 +5,13 @@ import { getDatabaseHealth } from '../config/database';
 import { locationStreamService } from '../services/location-stream.service';
 import { deviceStreamService } from '../services/device-stream.service';
 import { wsDispatcher } from '../websocket/ws-dispatcher';
+import { livePingService } from '../services/live-ping.service';
 
 const router = Router();
 
 /**
  * @route   GET /api/v1/health
- * @desc    Kubernetes readiness, liveness, and startup probe endpoint for 3 interconnected DBs
+ * @desc    Kubernetes / Render readiness, liveness, and startup probe endpoint for 3 interconnected DBs
  */
 router.get('/', (_req: Request, res: Response) => {
   const dbHealth = getDatabaseHealth();
@@ -21,14 +22,21 @@ router.get('/', (_req: Request, res: Response) => {
   const statusCode = isDbConnected ? 200 : 503;
 
   const memoryUsage = process.memoryUsage();
+  const uptimeSeconds = Math.round(process.uptime());
 
   res.status(statusCode).json({
     status,
-    service: 'Helping Services Sub-Backend',
+    service: env.PROJECT_NAME,
     version: env.VERSION,
     environment: env.ENVIRONMENT,
     timestamp: new Date().toISOString(),
-    uptimeSeconds: Math.round(process.uptime()),
+    uptimeSeconds,
+    uptimeHuman: livePingService.formatUptime(uptimeSeconds),
+    render: {
+      isRender: env.IS_RENDER,
+      externalUrl: env.RENDER_EXTERNAL_URL || null,
+      serviceId: env.RENDER_SERVICE_ID || null,
+    },
     database: {
       status: isDbConnected ? 'connected' : 'disconnected',
       readyState: defaultState,
@@ -55,12 +63,19 @@ router.get('/', (_req: Request, res: Response) => {
  */
 router.get('/ping', (_req: Request, res: Response) => {
   const dbHealth = getDatabaseHealth();
+  const uptimeSeconds = Math.round(process.uptime());
+  const telemetry = livePingService.getLiveTelemetry();
+
   res.status(200).json({
     success: true,
     status: 'live',
     ping: 'pong',
+    service: env.PROJECT_NAME,
+    version: env.VERSION,
+    environment: env.ENVIRONMENT,
     timestamp: new Date().toISOString(),
-    uptimeSeconds: Math.round(process.uptime()),
+    uptimeSeconds,
+    uptimeHuman: livePingService.formatUptime(uptimeSeconds),
     activeWebSockets: wsDispatcher.getActiveCount(),
     databases: {
       allConnected: dbHealth.allConnected,
@@ -68,6 +83,65 @@ router.get('/ping', (_req: Request, res: Response) => {
       fleet: dbHealth.databases.fleet,
       telemetry: dbHealth.databases.telemetry,
     },
+    selfPing: {
+      workerRunning: telemetry.workerRunning,
+      targetUrl: telemetry.targetUrl,
+      lastPingAt: telemetry.stats.lastPingAt,
+      lastLatencyMs: telemetry.stats.lastPingLatencyMs,
+      successRate: telemetry.stats.successRate,
+      status: telemetry.stats.lastPingStatus,
+    },
+    render: telemetry.renderEnvironment,
+  });
+});
+
+/**
+ * @route   GET /api/v1/health/live-ping
+ * @desc    Comprehensive live ping telemetry diagnostics and historical latency report
+ */
+router.get('/live-ping', (_req: Request, res: Response) => {
+  const dbHealth = getDatabaseHealth();
+  const uptimeSeconds = Math.round(process.uptime());
+  const telemetry = livePingService.getLiveTelemetry();
+  const memoryUsage = process.memoryUsage();
+
+  res.status(200).json({
+    success: true,
+    status: 'live',
+    ping: 'pong',
+    service: env.PROJECT_NAME,
+    version: env.VERSION,
+    environment: env.ENVIRONMENT,
+    timestamp: new Date().toISOString(),
+    uptimeSeconds,
+    uptimeHuman: livePingService.formatUptime(uptimeSeconds),
+    activeWebSockets: wsDispatcher.getActiveCount(),
+    databases: dbHealth.databases,
+    telemetry,
+    system: {
+      memoryRssMb: Math.round(memoryUsage.rss / (1024 * 1024)),
+      memoryHeapUsedMb: Math.round(memoryUsage.heapUsed / (1024 * 1024)),
+      memoryHeapTotalMb: Math.round(memoryUsage.heapTotal / (1024 * 1024)),
+      nodeVersion: process.version,
+    },
+  });
+});
+
+/**
+ * @route   POST /api/v1/health/live-ping/trigger
+ * @desc    Manually trigger an on-demand self-ping and optional external target checks
+ */
+router.post('/live-ping/trigger', async (_req: Request, res: Response) => {
+  const selfPingResult = await livePingService.pingSelf();
+  const externalResults = await livePingService.pingExternalTargets();
+
+  res.status(200).json({
+    success: true,
+    message: 'Live ping probe executed successfully',
+    selfPing: selfPingResult,
+    externalTargets: externalResults,
+    activeWebSockets: wsDispatcher.getActiveCount(),
+    timestamp: new Date().toISOString(),
   });
 });
 

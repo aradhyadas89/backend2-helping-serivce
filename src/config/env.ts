@@ -101,5 +101,20 @@ export const env = {
   SPEED_ALERT_THRESHOLD_KMPH: parseFloat(process.env.SPEED_ALERT_THRESHOLD_KMPH || '90'),
   LOW_BATTERY_ALERT_THRESHOLD: parseInt(process.env.LOW_BATTERY_ALERT_THRESHOLD || '15', 10),
   AUTO_ANALYSIS_WORKER_INTERVAL_MS: parseInt(process.env.AUTO_ANALYSIS_WORKER_INTERVAL_MS || '300000', 10),
+
+  // Render Cloud & Production Infrastructure
+  IS_RENDER: process.env.RENDER === 'true',
+  RENDER_EXTERNAL_URL: process.env.RENDER_EXTERNAL_URL || '',
+  RENDER_SERVICE_ID: process.env.RENDER_SERVICE_ID || '',
+  RENDER_INSTANCE_ID: process.env.RENDER_INSTANCE_ID || '',
+
+  // Live Ping & Self-Heartbeat System
+  LIVE_PING_ENABLED: process.env.LIVE_PING_ENABLED !== 'false',
+  LIVE_PING_INTERVAL_MINUTES: parseInt(process.env.LIVE_PING_INTERVAL_MINUTES || '10', 10),
+  LIVE_PING_URL: process.env.LIVE_PING_URL || '',
+  LIVE_PING_EXTERNAL_TARGETS: (process.env.LIVE_PING_EXTERNAL_TARGETS || '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter(Boolean),
 };
 

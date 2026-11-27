@@ -110,6 +110,17 @@ export function createApp(): Application {
     standardHeaders: true,
     legacyHeaders: false,
     skip: (req: Request) => {
+      // Exclude health and live-ping probes so monitoring services (UptimeRobot, Render probes) are never rate-limited
+      const path = req.path || '';
+      if (
+        path === '/health' ||
+        path === '/ping' ||
+        path === '/live-ping' ||
+        path.startsWith('/health') ||
+        path.startsWith('/live-ping')
+      ) {
+        return true;
+      }
       const secret =
         (req.headers['x-engine-secret'] as string) ||
         (req.headers['x-admin-sub-backend-secret'] as string);
@@ -139,23 +150,11 @@ export function createApp(): Application {
     });
   });
 
-  // Fast Live Ping & Heartbeat Probes
-  app.get(['/ping', '/live-ping', `${env.API_V1_STR}/ping`], (_req: Request, res: Response) => {
-    const dbHealth = getDatabaseHealth();
-    res.status(200).json({
-      success: true,
-      status: 'live',
-      ping: 'pong',
-      timestamp: new Date().toISOString(),
-      uptimeSeconds: Math.round(process.uptime()),
-      activeWebSockets: wsDispatcher.getActiveCount(),
-      databases: {
-        allConnected: dbHealth.allConnected,
-        orders: dbHealth.databases.orders,
-        fleet: dbHealth.databases.fleet,
-        telemetry: dbHealth.databases.telemetry,
-      },
-    });
+  // Fast Live Ping & Heartbeat Probes (Render & Production Monitoring)
+  app.get(['/ping', '/live-ping', `${env.API_V1_STR}/ping`, `${env.API_V1_STR}/live-ping`], (_req: Request, res: Response) => {
+    const { livePingService } = require('./services/live-ping.service');
+    const diagnostics = livePingService.getDiagnostics();
+    res.status(200).json(diagnostics);
   });
 
   // 404 Catch-All Handler

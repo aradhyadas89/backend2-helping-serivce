@@ -204,13 +204,18 @@ export function setupWebSocketServer(httpServer: HttpServer): WebSocketServer {
             );
           }
         } else if (msg.action === 'ping' || msg.action === 'live_ping') {
+          const clientTime = typeof msg.clientTime === 'number' ? msg.clientTime : undefined;
+          const latencyMs = clientTime ? Date.now() - clientTime : undefined;
           ws.send(
             JSON.stringify({
               type: msg.action === 'live_ping' ? 'live_pong' : 'pong',
               status: 'live',
+              service: env.PROJECT_NAME,
               timestamp: new Date().toISOString(),
-              clientTime: msg.clientTime || undefined,
+              clientTime,
+              latencyMs,
               activeConnections: wsDispatcher.getActiveCount(),
+              uptimeSeconds: Math.round(process.uptime()),
             })
           );
         }
